@@ -101,6 +101,14 @@ final class AnalysisCache: @unchecked Sendable {
             payload BLOB NOT NULL
         );
         """)
+        // Home locations (auto-detected + user-added), excluded from trip
+        // detection -- not every GPS-dense date range is a trip.
+        try exec("""
+        CREATE TABLE IF NOT EXISTS home_location (
+            id      TEXT PRIMARY KEY,
+            payload BLOB NOT NULL
+        );
+        """)
 
         let stored = Int(value(forMetaKey: "schema_version") ?? "0") ?? 0
         if stored != Self.schemaVersion {
@@ -256,6 +264,67 @@ final class AnalysisCache: @unchecked Sendable {
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw CacheError.statementFailed(lastErrorMessage)
         }
+    }
+
+    // MARK: Home locations
+
+    func loadHomeLocations() throws -> [HomeLocation] {
+        var out: [HomeLocation] = []
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT payload FROM home_location ORDER BY rowid ASC;",
+                                 -1, &stmt, nil) == SQLITE_OK else {
+            throw CacheError.statementFailed(lastErrorMessage)
+        }
+        defer { sqlite3_finalize(stmt) }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let bytes = sqlite3_column_blob(stmt, 0) else { continue }
+            let count = Int(sqlite3_column_bytes(stmt, 0))
+            let data = Data(bytes: bytes, count: count)
+            if let home = try? decoder.decode(HomeLocation.self, from: data) { out.append(home) }
+        }
+        return out
+    }
+
+    func saveHomeLocation(_ home: HomeLocation) throws {
+        let data = try encoder.encode(home)
+        var stmt: OpaquePointer?
+        let sql = "INSERT INTO home_location (id, payload) VALUES (?, ?) " +
+                  "ON CONFLICT(id) DO UPDATE SET payload=excluded.payload;"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw CacheError.statementFailed(lastErrorMessage)
+        }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, home.id, -1, SQLITE_TRANSIENT)
+        try data.withUnsafeBytes { raw in
+            sqlite3_bind_blob(stmt, 2, raw.baseAddress, Int32(raw.count), SQLITE_TRANSIENT)
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                throw CacheError.statementFailed(lastErrorMessage)
+            }
+        }
+    }
+
+    func deleteHomeLocation(id: String) throws {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "DELETE FROM home_location WHERE id = ?;", -1, &stmt, nil) == SQLITE_OK else {
+            throw CacheError.statementFailed(lastErrorMessage)
+        }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, id, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw CacheError.statementFailed(lastErrorMessage)
+        }
+    }
+
+    /// Whether home auto-detection has already run (distinct from "zero
+    /// homes found" — a sparse-GPS library can legitimately detect none).
+    /// Stored in `meta` so detection runs once per library, not once per app
+    /// launch.
+    func homeDetectionHasRun() -> Bool {
+        value(forMetaKey: "home_detection_ran") == "1"
+    }
+
+    func markHomeDetectionRan() throws {
+        try setMeta("home_detection_ran", "1")
     }
 
     /// PRD §9.5: local deletion log, written *before* the PhotoKit call so a

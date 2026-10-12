@@ -171,6 +171,70 @@ final class LibraryScanner: ObservableObject {
                             fromCache: previous.photosFromCache)
     }
 
+    // MARK: Home locations
+
+    @Published private(set) var homeLocations: [HomeLocation] = []
+
+    /// Loads saved home locations (auto-detected and/or manually added).
+    /// Call once at launch, mirroring `loadTrips`.
+    func loadHomeLocations() {
+        homeLocations = (try? cache?.loadHomeLocations()) ?? []
+    }
+
+    /// Runs `HomeLocationDetector` over the current survivors and persists
+    /// what it finds. Reverse-geocodes each detected centroid so the home
+    /// list reads as a place name, not raw coordinates.
+    func detectHomeLocations() {
+        Task {
+            let candidates = HomeLocationDetector().detect(in: records, settings: settings)
+            guard !candidates.isEmpty else {
+                try? cache?.markHomeDetectionRan()
+                return
+            }
+
+            let names = await geocoder.names(for: candidates.map(\.location))
+            for (index, candidate) in candidates.enumerated() {
+                let resolvedName: String
+                if case .resolved(let name) = names[index] {
+                    resolvedName = name
+                } else {
+                    resolvedName = "Home \(index + 1)"
+                }
+                let home = HomeLocation(name: resolvedName,
+                                        latitude: candidate.location.coordinate.latitude,
+                                        longitude: candidate.location.coordinate.longitude,
+                                        radius: settings.homeRadius,
+                                        isAutoDetected: true,
+                                        distinctDayCount: candidate.dayCount)
+                homeLocations.append(home)
+                try? cache?.saveHomeLocation(home)
+            }
+            try? cache?.markHomeDetectionRan()
+            log.notice("Auto-detected \(candidates.count) home location(s)")
+        }
+    }
+
+    /// Adds a home the user entered manually (PRD requirement: auto-detect
+    /// with override — some homes, like a previous city, may need to be
+    /// added by hand).
+    func addHomeLocation(name: String, latitude: Double, longitude: Double, radius: Double? = nil) {
+        let home = HomeLocation(name: name, latitude: latitude, longitude: longitude,
+                                radius: radius ?? settings.homeRadius, isAutoDetected: false)
+        homeLocations.append(home)
+        try? cache?.saveHomeLocation(home)
+    }
+
+    func updateHomeLocation(_ home: HomeLocation) {
+        guard let index = homeLocations.firstIndex(where: { $0.id == home.id }) else { return }
+        homeLocations[index] = home
+        try? cache?.saveHomeLocation(home)
+    }
+
+    func removeHomeLocation(id: String) {
+        homeLocations.removeAll { $0.id == id }
+        try? cache?.deleteHomeLocation(id: id)
+    }
+
     // MARK: Trips
 
     @Published private(set) var trips: [Trip] = []
@@ -185,12 +249,14 @@ final class LibraryScanner: ObservableObject {
     /// Runs `TripDetector` over the current survivors and returns candidates
     /// that do not already overlap a saved trip's date range, so re-running
     /// detection after naming some trips does not re-offer the same range.
-    /// Place segments (PRD §10.2) are computed here, geocoded only once the
-    /// candidate is actually saved (`saveTrip`) — geocoding every candidate
-    /// up front would fire network requests for trips the user never keeps.
+    /// Days at a known home location (PRD requirement: not everything is a
+    /// trip) are excluded before detection even runs. Place segments
+    /// (PRD §10.2) are computed here, geocoded only once the candidate is
+    /// actually saved (`saveTrip`) — geocoding every candidate up front
+    /// would fire network requests for trips the user never keeps.
     func detectTripCandidates(detector: TripDetector = TripDetector()) -> [TripDetector.Candidate] {
         let survivors = records.filter { $0.tier != .tier1 && $0.tier != .tier2 }
-        let candidates = detector.detect(in: survivors, settings: settings)
+        let candidates = detector.detect(in: survivors, settings: settings, homes: homeLocations)
         return candidates.filter { candidate in
             !trips.contains { trip in
                 trip.startDay <= candidate.endDay && candidate.startDay <= trip.endDay
@@ -405,6 +471,13 @@ final class LibraryScanner: ObservableObject {
             report = finishedReport
             phase = .finished
             log.notice("Scan finished in \(elapsed.description)")
+
+            // Home detection runs once per library, not once per scan, so a
+            // user's edits (renames, added/removed homes) are never
+            // silently overwritten by a rescan.
+            if homeLocations.isEmpty, cache?.homeDetectionHasRun() != true {
+                detectHomeLocations()
+            }
 
         } catch is CancellationError {
             phase = .cancelled

@@ -49,6 +49,14 @@ struct CuratorSettings: Codable, Equatable, Sendable {
     /// far (metres), even with no date gap -- catches a same-week trip to
     /// another city (PRD §10, adapted for GPS-rich libraries).
     var tripPlaceJumpDistance: CLLocationDistanceValue = 50_000
+    /// Photos within this distance (metres) of a home location are everyday
+    /// life, not a trip, regardless of date gaps or place-jump signals.
+    /// Default ~50km: a home city and its commute range.
+    var homeRadius: CLLocationDistanceValue = 50_000
+    /// A location cluster must appear on at least this many distinct days to
+    /// qualify as an auto-detected home -- a single long vacation should not
+    /// get mistaken for home just because it generated many photos.
+    var homeMinDistinctDays = 30
 
     // MARK: Clustering (PRD §7)
 

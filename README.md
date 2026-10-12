@@ -61,11 +61,21 @@ of this feature used date gaps only, based on a stale scan report that
 undercounted this library's GPS coverage — recent years here are actually
 85–94% GPS-covered). `TripDetector` now combines two boundary signals:
 
-1. A silent gap of at least `minGapDays` (default 3) between active days, or
+1. A silent gap of at least `minGapDays` (default 3) between active *away*
+   days, or
 2. A GPS jump of at least `tripPlaceJumpDistance` (default 50km) between
-   consecutive active days, even with **no** date gap — this catches a
+   consecutive active away days, even with **no** date gap — this catches a
    same-week trip to another city that pure date-gap detection would merge
    into ordinary life before and after it.
+
+A day is **home** when the majority of its located photos fall within a
+`HomeLocation`'s radius; home days are excluded before boundary detection
+runs at all, and themselves act as a boundary (a few quiet days at home
+between two trips separates them even if that's below `minGapDays`). Home
+locations are auto-detected from GPS density — the signal is *spread over
+many distinct days*, not photo count, so a single heavy vacation never
+outranks months of sparser home life — and editable/addable in Settings
+(radius per home, default 50km).
 
 Within a trip, `PlaceSegmenter` splits each day into stops by time and
 distance (PRD §10.2: ~500m / 30 min — separate settings from

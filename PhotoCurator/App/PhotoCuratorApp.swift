@@ -9,7 +9,10 @@ struct PhotoCuratorApp: App {
             RootView()
                 .environmentObject(scanner)
                 .frame(minWidth: 820, minHeight: 600)
-                .task { scanner.loadTrips() }
+                .task {
+                    scanner.loadTrips()
+                    scanner.loadHomeLocations()
+                }
         }
         .windowToolbarStyle(.unified)
 

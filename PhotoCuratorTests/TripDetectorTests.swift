@@ -165,6 +165,106 @@ final class TripDetectorTests: XCTestCase {
         XCTAssertEqual(candidates.first?.segmentsByDay.values.flatMap { $0 }.count, 1,
                        "two close-together same-day photos should form one segment")
     }
+
+    // MARK: Home exclusion (requirement: not everything is a trip)
+
+    private func home(latitude: Double, longitude: Double, radius: Double = 50_000) -> HomeLocation {
+        HomeLocation(name: "Home", latitude: latitude, longitude: longitude,
+                    radius: radius, isAutoDetected: true, distinctDayCount: 40)
+    }
+
+    /// A run of days entirely at home must never be offered as a trip, no
+    /// matter how many photos it has.
+    func testEntirelyHomeDaysProduceNoTrip() {
+        var detector = TripDetector()
+        detector.minPhotosToQualify = 2
+
+        let homeCoord = (latitude: 37.5665, longitude: 126.9780)
+        let records = (0..<5).map { day in
+            record("home-\(day)", daysFromEpoch: day, latitude: homeCoord.latitude, longitude: homeCoord.longitude)
+        }
+        let homes = [home(latitude: homeCoord.latitude, longitude: homeCoord.longitude)]
+
+        XCTAssertTrue(detector.detect(in: records, homes: homes).isEmpty)
+    }
+
+    /// A real trip away from home is still detected once home days are
+    /// excluded, even though nothing separates them by date gap alone.
+    func testAwayDaysStillFormATripWithHomeDaysRemoved() {
+        var detector = TripDetector()
+        detector.minGapDays = 3
+        detector.minPhotosToQualify = 2
+
+        let homeCoord = (latitude: 37.5665, longitude: 126.9780)
+        let awayCoord = (latitude: 35.1796, longitude: 129.0756)   // Busan, ~325km away
+        let homes = [home(latitude: homeCoord.latitude, longitude: homeCoord.longitude)]
+
+        let records = [
+            record("h1", daysFromEpoch: 0, latitude: homeCoord.latitude, longitude: homeCoord.longitude),
+            record("h2", daysFromEpoch: 1, latitude: homeCoord.latitude, longitude: homeCoord.longitude),
+            record("t1", daysFromEpoch: 2, latitude: awayCoord.latitude, longitude: awayCoord.longitude),
+            record("t2", daysFromEpoch: 3, latitude: awayCoord.latitude, longitude: awayCoord.longitude),
+            record("h3", daysFromEpoch: 4, latitude: homeCoord.latitude, longitude: homeCoord.longitude)
+        ]
+
+        let candidates = detector.detect(in: records, homes: homes)
+        XCTAssertEqual(candidates.count, 1)
+        XCTAssertEqual(candidates.first?.photoIds.sorted(), ["t1", "t2"])
+    }
+
+    /// Home days between two away runs act as a boundary even when the
+    /// silent-day count alone would not have crossed `minGapDays`.
+    func testHomeDaysSeparateTwoTripsEvenBelowMinGap() {
+        var detector = TripDetector()
+        detector.minGapDays = 5   // deliberately high; the home days are what separates these
+        detector.minPhotosToQualify = 1
+
+        let homeCoord = (latitude: 37.5665, longitude: 126.9780)
+        let tripA = (latitude: 35.1796, longitude: 129.0756)
+        let tripB = (latitude: 33.4996, longitude: 126.5312)   // Jeju
+        let homes = [home(latitude: homeCoord.latitude, longitude: homeCoord.longitude)]
+
+        let records = [
+            record("a", daysFromEpoch: 0, latitude: tripA.latitude, longitude: tripA.longitude),
+            record("home", daysFromEpoch: 1, latitude: homeCoord.latitude, longitude: homeCoord.longitude),
+            record("b", daysFromEpoch: 2, latitude: tripB.latitude, longitude: tripB.longitude)
+        ]
+
+        let candidates = detector.detect(in: records, homes: homes)
+        XCTAssertEqual(candidates.count, 2, "a home day between two away days should split them into separate trips")
+    }
+
+    /// A day with no located photos at all cannot be classified as home —
+    /// there is nothing to check against a radius — so it still
+    /// participates in detection via the date-gap signal.
+    func testDayWithNoGPSIsNeverClassifiedAsHome() {
+        var detector = TripDetector()
+        detector.minPhotosToQualify = 1
+        let homes = [home(latitude: 37.5665, longitude: 126.9780)]
+
+        let candidates = detector.detect(in: [record("a", daysFromEpoch: 0)], homes: homes)
+        XCTAssertEqual(candidates.count, 1, "an unlocated day must not be silently dropped as home")
+    }
+
+    /// A day mostly spent away, with one home-radius photo along the way
+    /// (e.g. an airport near home before departure), should still count as
+    /// an away day — the majority rule, not "any home photo disqualifies".
+    func testMajorityAwayDayIsNotHome() {
+        var detector = TripDetector()
+        detector.minPhotosToQualify = 1
+        let homeCoord = (latitude: 37.5665, longitude: 126.9780)
+        let awayCoord = (latitude: 35.1796, longitude: 129.0756)
+        let homes = [home(latitude: homeCoord.latitude, longitude: homeCoord.longitude)]
+
+        var mixed: [PhotoRecord] = []
+        mixed.append(record("home-photo", daysFromEpoch: 0, latitude: homeCoord.latitude, longitude: homeCoord.longitude))
+        for i in 0..<4 {
+            mixed.append(record("away-\(i)", daysFromEpoch: 0, latitude: awayCoord.latitude, longitude: awayCoord.longitude))
+        }
+
+        let candidates = detector.detect(in: mixed, homes: homes)
+        XCTAssertEqual(candidates.count, 1, "a day that is mostly away should still count as an away day")
+    }
 }
 
 final class PlaceSegmenterTests: XCTestCase {
@@ -270,5 +370,70 @@ final class TripModelTests: XCTestCase {
         let name = Trip.suggestedName(startDay: day, endDay: day,
                                       placeNames: ["Seoul, South Korea", "Busan, South Korea"])
         XCTAssertEqual(name, "Seoul, South Korea + 1 more")
+    }
+}
+
+final class HomeLocationDetectorTests: XCTestCase {
+
+    private func record(_ id: String, daysFromEpoch: Int, latitude: Double, longitude: Double) -> PhotoRecord {
+        var record = PhotoRecord(id: id)
+        record.creationDate = Date(timeIntervalSince1970: 0)
+            .addingTimeInterval(TimeInterval(daysFromEpoch * 86400 + 43200))
+        record.latitude = latitude
+        record.longitude = longitude
+        return record
+    }
+
+    /// The defining signal is day-spread, not photo count: a short, heavy
+    /// trip must not outrank a long, sparse pattern of home life.
+    func testDenseShortTripDoesNotOutrankSparseLongTermHome() {
+        var settings = CuratorSettings.default
+        settings.homeMinDistinctDays = 30
+
+        var records: [PhotoRecord] = []
+        // "Home": 1 photo/day across 40 distinct days.
+        for day in 0..<40 {
+            records.append(record("home-\(day)", daysFromEpoch: day, latitude: 37.5665, longitude: 126.9780))
+        }
+        // "Trip": 50 photos crammed into a single day, far away.
+        for i in 0..<50 {
+            records.append(record("trip-\(i)", daysFromEpoch: 100, latitude: 48.8566, longitude: 2.3522))
+        }
+
+        let candidates = HomeLocationDetector().detect(in: records, settings: settings)
+        XCTAssertEqual(candidates.count, 1, "the one-day photo burst must not qualify as a second home")
+        XCTAssertEqual(candidates.first?.dayCount, 40)
+    }
+
+    /// Below the minimum distinct-day bar, nothing qualifies as home.
+    func testBelowMinDistinctDaysProducesNoCandidate() {
+        var settings = CuratorSettings.default
+        settings.homeMinDistinctDays = 30
+
+        let records = (0..<10).map {
+            record("p\($0)", daysFromEpoch: $0, latitude: 37.5665, longitude: 126.9780)
+        }
+
+        XCTAssertTrue(HomeLocationDetector().detect(in: records, settings: settings).isEmpty)
+    }
+
+    /// Two genuinely distant, independently long-term locations (e.g. two
+    /// homes lived in over the years) both qualify, rather than merging
+    /// into one or losing the weaker one.
+    func testTwoDistantLongTermLocationsBothQualify() {
+        var settings = CuratorSettings.default
+        settings.homeMinDistinctDays = 30
+        settings.homeRadius = 50_000
+
+        var records: [PhotoRecord] = []
+        for day in 0..<40 {
+            records.append(record("seoul-\(day)", daysFromEpoch: day, latitude: 37.5665, longitude: 126.9780))
+        }
+        for day in 40..<80 {
+            records.append(record("tokyo-\(day)", daysFromEpoch: day, latitude: 35.6762, longitude: 139.6503))
+        }
+
+        let candidates = HomeLocationDetector().detect(in: records, settings: settings)
+        XCTAssertEqual(candidates.count, 2)
     }
 }

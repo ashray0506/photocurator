@@ -44,6 +44,8 @@ struct SettingsView: View {
                 }
             }
 
+            homeLocationsSection
+
             Section {
                 Button("Reset to defaults") {
                     scanner.settings.resetToDefaults()
@@ -52,5 +54,74 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 460, height: 560)
+    }
+
+    /// Not every GPS-dense date range is a trip: home locations (and
+    /// anywhere within their radius) are excluded from trip detection.
+    /// Auto-detected from density, user-editable, user-addable.
+    private var homeLocationsSection: some View {
+        Section("Home locations") {
+            if scanner.homeLocations.isEmpty {
+                Text("None detected yet. Home locations are found automatically from a library scan, or you can add one below.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(scanner.homeLocations) { home in
+                HomeLocationRow(home: home,
+                                onUpdate: { scanner.updateHomeLocation($0) },
+                                onRemove: { scanner.removeHomeLocation(id: home.id) })
+            }
+            Button("Detect Home Locations") {
+                scanner.detectHomeLocations()
+            }
+            .disabled(scanner.records.isEmpty)
+        }
+    }
+}
+
+private struct HomeLocationRow: View {
+    let home: HomeLocation
+    let onUpdate: (HomeLocation) -> Void
+    let onRemove: () -> Void
+    @State private var radiusKm: Double
+
+    init(home: HomeLocation, onUpdate: @escaping (HomeLocation) -> Void, onRemove: @escaping () -> Void) {
+        self.home = home
+        self.onUpdate = onUpdate
+        self.onRemove = onRemove
+        self._radiusKm = State(initialValue: home.radius / 1000)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                VStack(alignment: .leading) {
+                    Text(home.name).font(.callout.weight(.medium))
+                    if home.isAutoDetected {
+                        Text("Auto-detected · \(home.distinctDayCount.formatted()) days")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Added manually")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                Button(role: .destructive, action: onRemove) {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.plain)
+            }
+            HStack {
+                Text("Radius: \(Int(radiusKm)) km").font(.caption)
+                Slider(value: $radiusKm, in: 5...200, step: 5) { _ in
+                    var updated = home
+                    updated.radius = radiusKm * 1000
+                    onUpdate(updated)
+                }
+            }
+        }
+        .padding(.vertical, 4)
     }
 }
