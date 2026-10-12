@@ -92,6 +92,8 @@ struct TripDetailView: View {
                     .foregroundStyle(.secondary)
             }
 
+            DayDecorationBar(day: day, trip: trip)
+
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 110, maximum: 160), spacing: 8)], spacing: 8) {
                 ForEach(chosen) { record in
                     thumbnailCell(record, isChosen: true, day: day, alternates: alternates)

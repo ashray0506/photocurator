@@ -55,7 +55,9 @@ struct PhotoBookExporter {
             let images = await loadFullImages(for: entry.photos)
             let placeNames = trip.segments(for: entry.day).compactMap(\.placeName)
             drawDayPage(context: context, mediaBox: mediaBox, day: entry.day,
-                       placeNames: placeNames, images: images)
+                       placeNames: placeNames, images: images,
+                       style: trip.captionStyle(for: entry.day),
+                       stickers: trip.stickers(for: entry.day))
         }
 
         context.closePDF()
@@ -102,17 +104,17 @@ struct PhotoBookExporter {
     }
 
     private func drawDayPage(context: CGContext, mediaBox: CGRect, day: Date,
-                             placeNames: [String], images: [NSImage]) {
+                             placeNames: [String], images: [NSImage],
+                             style: PageCaptionStyle, stickers: [PageSticker]) {
         context.beginPDFPage(nil)
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
 
         let formatter = DateFormatter()
-        formatter.dateFormat = "EEEE, MMMM d, yyyy"
-        let title = formatter.string(from: day) as NSString
-        let titleAttributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 20, weight: .semibold)
-        ]
+        formatter.dateFormat = style == .minimal ? "MMM d, yyyy" : "EEEE, MMMM d, yyyy"
+        let title = (style == .minimal ? formatter.string(from: day).uppercased()
+                                       : formatter.string(from: day)) as NSString
+        let titleAttributes = Self.titleAttributes(for: style)
         let titleSize = title.size(withAttributes: titleAttributes)
         let titleY = mediaBox.height - margin - titleSize.height
         title.draw(at: CGPoint(x: margin, y: titleY), withAttributes: titleAttributes)
@@ -150,8 +152,44 @@ struct PhotoBookExporter {
             drawAspectFit(image: image, in: rect)
         }
 
+        // Stickers (decoration only — the photos above are drawn exactly
+        // as loaded; nothing here modifies the source images).
+        for sticker in stickers {
+            drawSticker(sticker, in: mediaBox)
+        }
+
         NSGraphicsContext.restoreGraphicsState()
         context.endPDFPage()
+    }
+
+    /// Font/color per caption style preset. `.playful` is the "kids" look:
+    /// rounded system font where available, warm accent color.
+    private static func titleAttributes(for style: PageCaptionStyle) -> [NSAttributedString.Key: Any] {
+        switch style {
+        case .classic:
+            return [.font: NSFont.systemFont(ofSize: 20, weight: .semibold)]
+        case .playful:
+            let base = NSFont.systemFont(ofSize: 24, weight: .bold)
+            let roundedDescriptor = base.fontDescriptor.withDesign(.rounded)
+            let rounded = roundedDescriptor.flatMap { NSFont(descriptor: $0, size: 24) } ?? base
+            return [.font: rounded, .foregroundColor: NSColor.systemOrange]
+        case .minimal:
+            return [.font: NSFont.systemFont(ofSize: 13, weight: .medium),
+                   .foregroundColor: NSColor.secondaryLabelColor]
+        }
+    }
+
+    private func drawSticker(_ sticker: PageSticker, in mediaBox: CGRect) {
+        let fontSize: CGFloat = 36 * sticker.scale
+        let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: fontSize)]
+        let text = sticker.emoji as NSString
+        let size = text.size(withAttributes: attributes)
+        // Stored position is normalised 0...1 from the top-left (how the
+        // editor's SwiftUI canvas addresses it); PDF space is bottom-left,
+        // so the y axis flips here.
+        let point = CGPoint(x: CGFloat(sticker.x) * mediaBox.width - size.width / 2,
+                            y: (1 - CGFloat(sticker.y)) * mediaBox.height - size.height / 2)
+        text.draw(at: point, withAttributes: attributes)
     }
 
     private func drawAspectFit(image: NSImage, in rect: CGRect) {

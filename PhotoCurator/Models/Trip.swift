@@ -1,5 +1,45 @@
 import Foundation
 
+/// A sticker placed on a book page (decoration only — per product
+/// requirement, this never touches the source photo; it's drawn on top at
+/// export time, the same way a caption is).
+struct PageSticker: Codable, Sendable, Hashable, Identifiable {
+    var id: String = UUID().uuidString
+    var emoji: String
+    /// Normalised 0...1 position on the page, so it survives any page-size
+    /// change between the editor and the exported PDF.
+    var x: Double
+    var y: Double
+    var scale: Double = 1.0
+
+    /// A sensible emoji palette covering what both kids and adults reach
+    /// for on a travel photo — not exhaustive, just a curated starting set
+    /// rather than the full system emoji picker, which would be overkill
+    /// for "decorate a page."
+    static let palette = [
+        "⭐️", "❤️", "🎉", "✈️", "📍", "🌅", "🏖️", "🗺️",
+        "🍜", "📸", "🐶", "🐱", "🌸", "🔥", "😂", "😍"
+    ]
+}
+
+/// A page's caption styling — a few named presets rather than a full font
+/// picker, so a page stays readable and on-brand. Per-day, not per-trip,
+/// since different pages may suit different moods (a kid's silly day vs.
+/// a quiet grown-up one).
+enum PageCaptionStyle: String, Codable, Sendable, CaseIterable {
+    case classic      // the default: serif, neutral
+    case playful      // rounded, warm color — the "kids" preset
+    case minimal      // small caps, muted
+
+    var displayName: String {
+        switch self {
+        case .classic: return "Classic"
+        case .playful: return "Playful"
+        case .minimal: return "Minimal"
+        }
+    }
+}
+
 /// One place segment within a trip day, with its resolved name (PRD §10.2,
 /// §10.3). Stored (not recomputed each time) because reverse geocoding is a
 /// network call and should not re-run every time a trip is opened.
@@ -41,11 +81,18 @@ struct Trip: Codable, Identifiable, Sendable, Hashable {
     /// empty until then, which callers read as "not yet chosen, show every
     /// survivor for this day" rather than "deliberately empty day".
     var selectedPhotoIdsByDay: [String: [String]] = [:]
+    /// Decorative stickers per day — purely cosmetic, drawn at export time;
+    /// the underlying photos are never modified.
+    var stickersByDay: [String: [PageSticker]] = [:]
+    /// Caption style per day, defaulting to `.classic` when unset.
+    var captionStyleByDay: [String: PageCaptionStyle] = [:]
     var createdAt: Date
 
     init(id: String = UUID().uuidString, name: String, startDay: Date, endDay: Date,
         photoIds: [String], placeSegmentsByDay: [String: [TripPlaceSegment]] = [:],
         selectedPhotoIdsByDay: [String: [String]] = [:],
+        stickersByDay: [String: [PageSticker]] = [:],
+        captionStyleByDay: [String: PageCaptionStyle] = [:],
         createdAt: Date = Date()) {
         self.id = id
         self.name = name
@@ -54,6 +101,8 @@ struct Trip: Codable, Identifiable, Sendable, Hashable {
         self.photoIds = photoIds
         self.placeSegmentsByDay = placeSegmentsByDay
         self.selectedPhotoIdsByDay = selectedPhotoIdsByDay
+        self.stickersByDay = stickersByDay
+        self.captionStyleByDay = captionStyleByDay
         self.createdAt = createdAt
     }
 
@@ -63,6 +112,14 @@ struct Trip: Codable, Identifiable, Sendable, Hashable {
 
     func segments(for day: Date) -> [TripPlaceSegment] {
         placeSegmentsByDay[Self.dayKey(day)] ?? []
+    }
+
+    func stickers(for day: Date) -> [PageSticker] {
+        stickersByDay[Self.dayKey(day)] ?? []
+    }
+
+    func captionStyle(for day: Date) -> PageCaptionStyle {
+        captionStyleByDay[Self.dayKey(day)] ?? .classic
     }
 
     /// All distinct place names across the trip, in first-seen order —

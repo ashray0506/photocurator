@@ -478,6 +478,39 @@ final class LibraryScanner: ObservableObject {
         try? cache?.saveTrip(trips[index])
     }
 
+    // MARK: Page decoration (stickers, caption style)
+    //
+    // Purely cosmetic — drawn on top of the page at export time, same as a
+    // caption. The underlying photos are never modified, per the product
+    // requirement that source photos stay untouched.
+
+    func addSticker(_ sticker: PageSticker, to day: Date, in trip: Trip) {
+        guard let index = trips.firstIndex(where: { $0.id == trip.id }) else { return }
+        trips[index].stickersByDay[Trip.dayKey(day), default: []].append(sticker)
+        try? cache?.saveTrip(trips[index])
+    }
+
+    func removeSticker(id: String, from day: Date, in trip: Trip) {
+        guard let index = trips.firstIndex(where: { $0.id == trip.id }) else { return }
+        trips[index].stickersByDay[Trip.dayKey(day)]?.removeAll { $0.id == id }
+        try? cache?.saveTrip(trips[index])
+    }
+
+    func moveSticker(id: String, to position: (x: Double, y: Double), day: Date, in trip: Trip) {
+        guard let index = trips.firstIndex(where: { $0.id == trip.id }) else { return }
+        let key = Trip.dayKey(day)
+        guard let stickerIndex = trips[index].stickersByDay[key]?.firstIndex(where: { $0.id == id }) else { return }
+        trips[index].stickersByDay[key]?[stickerIndex].x = position.x
+        trips[index].stickersByDay[key]?[stickerIndex].y = position.y
+        try? cache?.saveTrip(trips[index])
+    }
+
+    func setCaptionStyle(_ style: PageCaptionStyle, for day: Date, in trip: Trip) {
+        guard let index = trips.firstIndex(where: { $0.id == trip.id }) else { return }
+        trips[index].captionStyleByDay[Trip.dayKey(day)] = style
+        try? cache?.saveTrip(trips[index])
+    }
+
     // MARK: Pipeline
 
     private func run() async {
