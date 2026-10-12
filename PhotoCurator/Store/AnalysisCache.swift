@@ -92,6 +92,15 @@ final class AnalysisCache: @unchecked Sendable {
             deleted_at REAL NOT NULL
         );
         """)
+        // User-confirmed trips (simplified PRD §11 Book). One row per trip,
+        // the whole struct stored as JSON since it is small and read/written
+        // as a unit.
+        try exec("""
+        CREATE TABLE IF NOT EXISTS trip (
+            id      TEXT PRIMARY KEY,
+            payload BLOB NOT NULL
+        );
+        """)
 
         let stored = Int(value(forMetaKey: "schema_version") ?? "0") ?? 0
         if stored != Self.schemaVersion {
@@ -197,6 +206,56 @@ final class AnalysisCache: @unchecked Sendable {
         }
         try exec("COMMIT;")
         committed = true
+    }
+
+    // MARK: Trips
+
+    /// All saved trips, newest-created first.
+    func loadTrips() throws -> [Trip] {
+        var out: [Trip] = []
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT payload FROM trip ORDER BY rowid DESC;",
+                                 -1, &stmt, nil) == SQLITE_OK else {
+            throw CacheError.statementFailed(lastErrorMessage)
+        }
+        defer { sqlite3_finalize(stmt) }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let bytes = sqlite3_column_blob(stmt, 0) else { continue }
+            let count = Int(sqlite3_column_bytes(stmt, 0))
+            let data = Data(bytes: bytes, count: count)
+            if let trip = try? decoder.decode(Trip.self, from: data) { out.append(trip) }
+        }
+        return out
+    }
+
+    func saveTrip(_ trip: Trip) throws {
+        let data = try encoder.encode(trip)
+        var stmt: OpaquePointer?
+        let sql = "INSERT INTO trip (id, payload) VALUES (?, ?) " +
+                  "ON CONFLICT(id) DO UPDATE SET payload=excluded.payload;"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw CacheError.statementFailed(lastErrorMessage)
+        }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, trip.id, -1, SQLITE_TRANSIENT)
+        try data.withUnsafeBytes { raw in
+            sqlite3_bind_blob(stmt, 2, raw.baseAddress, Int32(raw.count), SQLITE_TRANSIENT)
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                throw CacheError.statementFailed(lastErrorMessage)
+            }
+        }
+    }
+
+    func deleteTrip(id: String) throws {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "DELETE FROM trip WHERE id = ?;", -1, &stmt, nil) == SQLITE_OK else {
+            throw CacheError.statementFailed(lastErrorMessage)
+        }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, id, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw CacheError.statementFailed(lastErrorMessage)
+        }
     }
 
     /// PRD §9.5: local deletion log, written *before* the PhotoKit call so a

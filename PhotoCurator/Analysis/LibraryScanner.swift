@@ -171,6 +171,57 @@ final class LibraryScanner: ObservableObject {
                             fromCache: previous.photosFromCache)
     }
 
+    // MARK: Trips
+
+    @Published private(set) var trips: [Trip] = []
+
+    /// Loads saved trips from the cache. Call once after init (or after a
+    /// scan, harmlessly — trips are independent of scan results).
+    func loadTrips() {
+        trips = (try? cache?.loadTrips()) ?? []
+    }
+
+    /// Runs `TripDetector` over the current survivors and returns candidates
+    /// that do not already overlap a saved trip's date range, so re-running
+    /// detection after naming some trips does not re-offer the same range.
+    func detectTripCandidates(detector: TripDetector = TripDetector()) -> [TripDetector.Candidate] {
+        let survivors = records.filter { $0.tier != .tier1 && $0.tier != .tier2 }
+        let candidates = detector.detect(in: survivors)
+        return candidates.filter { candidate in
+            !trips.contains { trip in
+                trip.startDay <= candidate.endDay && candidate.startDay <= trip.endDay
+            }
+        }
+    }
+
+    /// Confirms a candidate as a named trip and persists it.
+    func saveTrip(name: String, candidate: TripDetector.Candidate) {
+        let trip = Trip(name: name, startDay: candidate.startDay, endDay: candidate.endDay,
+                        photoIds: candidate.photoIds)
+        trips.insert(trip, at: 0)
+        try? cache?.saveTrip(trip)
+    }
+
+    func renameTrip(id: String, to newName: String) {
+        guard let index = trips.firstIndex(where: { $0.id == id }) else { return }
+        trips[index].name = newName
+        try? cache?.saveTrip(trips[index])
+    }
+
+    func deleteTrip(id: String) {
+        trips.removeAll { $0.id == id }
+        try? cache?.deleteTrip(id: id)
+    }
+
+    /// The trip's photos as live records, in capture order, for the day view
+    /// and PDF export.
+    func photos(in trip: Trip) -> [PhotoRecord] {
+        let byId = Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0) })
+        return trip.photoIds
+            .compactMap { byId[$0] }
+            .sorted { ($0.creationDate ?? .distantPast) < ($1.creationDate ?? .distantPast) }
+    }
+
     // MARK: Pipeline
 
     private func run() async {
@@ -555,7 +606,9 @@ struct PendingFace: Codable, Sendable {
 }
 
 /// One-shot gate around a continuation that a callback may invoke repeatedly.
-private final class ResumeOnce {
+/// Internal (not file-private): both `LibraryScanner` and `PhotoBookExporter`
+/// hit the same PhotoKit "handler may fire more than once" hazard.
+final class ResumeOnce {
     private let lock = NSLock()
     private var used = false
 

@@ -28,6 +28,12 @@
 		95DCB3C450D75CE4979AEEBF /* PhotoDeletionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA0081DE4F2C5C668504BEB8 /* PhotoDeletionService.swift */; };
 		2BBA1A4DF0EB54C89AFF76D6 /* TierReviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6954129ED4B9582F95C3E7BC /* TierReviewView.swift */; };
 		7B165DC85D1D5D1596B55F20 /* PhotoDeletionServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 255C8D38672F58CB9C2F7A16 /* PhotoDeletionServiceTests.swift */; };
+		531C8478082356CB82742ADA /* TripDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FFBD31C5F765CE4BA11123C /* TripDetector.swift */; };
+		B4DBE2F729D45931A02CFC73 /* PhotoBookExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02457A587C7567DA2AAD8ED /* PhotoBookExporter.swift */; };
+		79BE436EA5E654C0A00C8364 /* Trip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FC20B6F1B405A878A6057DF /* Trip.swift */; };
+		23EA160D6EFC5CB0A2B633A7 /* TripsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD84A737F3855915ACEEEC80 /* TripsView.swift */; };
+		7E811926C9935C149F9D84F6 /* TripDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98DCD10A478D53C7BB5D16B6 /* TripDetailView.swift */; };
+		70A05C44E0715DBFAB926109 /* TripDetectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0D691FD41E85632A8A48E5E /* TripDetectorTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -58,6 +64,12 @@
 		FA0081DE4F2C5C668504BEB8 /* PhotoDeletionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoDeletionService.swift; sourceTree = "<group>"; };
 		6954129ED4B9582F95C3E7BC /* TierReviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TierReviewView.swift; sourceTree = "<group>"; };
 		255C8D38672F58CB9C2F7A16 /* PhotoDeletionServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoDeletionServiceTests.swift; sourceTree = "<group>"; };
+		4FFBD31C5F765CE4BA11123C /* TripDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripDetector.swift; sourceTree = "<group>"; };
+		C02457A587C7567DA2AAD8ED /* PhotoBookExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoBookExporter.swift; sourceTree = "<group>"; };
+		6FC20B6F1B405A878A6057DF /* Trip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Trip.swift; sourceTree = "<group>"; };
+		DD84A737F3855915ACEEEC80 /* TripsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripsView.swift; sourceTree = "<group>"; };
+		98DCD10A478D53C7BB5D16B6 /* TripDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripDetailView.swift; sourceTree = "<group>"; };
+		F0D691FD41E85632A8A48E5E /* TripDetectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripDetectorTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -114,6 +126,8 @@
 		ED34743005925A0FA7F00246 /* App */ = {
 			isa = PBXGroup;
 			children = (
+				98DCD10A478D53C7BB5D16B6 /* TripDetailView.swift */,
+				DD84A737F3855915ACEEEC80 /* TripsView.swift */,
 				6954129ED4B9582F95C3E7BC /* TierReviewView.swift */,
 				6B360375B1A05A91961E3F8C /* PhotoCuratorApp.swift */,
 				ED29FBF0092F57558AE8B9D0 /* ScanView.swift */,
@@ -126,6 +140,7 @@
 		C6C6FA2531D850A29490E289 /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				6FC20B6F1B405A878A6057DF /* Trip.swift */,
 				E231F8A48CC155B9AB160AC0 /* PhotoRecord.swift */,
 				2C2EEEDB245955898CDAABD5 /* CuratorSettings.swift */,
 			);
@@ -175,6 +190,8 @@
 		D9A5733860AD5C08BCD0F5F9 /* Report */ = {
 			isa = PBXGroup;
 			children = (
+				C02457A587C7567DA2AAD8ED /* PhotoBookExporter.swift */,
+				4FFBD31C5F765CE4BA11123C /* TripDetector.swift */,
 				225B9DB2AE9D56AEA85767BC /* ScanReport.swift */,
 			);
 			path = Report;
@@ -192,6 +209,7 @@
 		7B2B89D1111452B4A69C2F77 /* PhotoCuratorTests */ = {
 			isa = PBXGroup;
 			children = (
+				F0D691FD41E85632A8A48E5E /* TripDetectorTests.swift */,
 				255C8D38672F58CB9C2F7A16 /* PhotoDeletionServiceTests.swift */,
 				8EA59FD242B05935B18355B3 /* TierAssignerTests.swift */,
 				C914311C6CFF56FD977210AE /* ScoringAndClusteringTests.swift */,
@@ -270,6 +288,11 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7E811926C9935C149F9D84F6 /* TripDetailView.swift in Sources */,
+				23EA160D6EFC5CB0A2B633A7 /* TripsView.swift in Sources */,
+				79BE436EA5E654C0A00C8364 /* Trip.swift in Sources */,
+				B4DBE2F729D45931A02CFC73 /* PhotoBookExporter.swift in Sources */,
+				531C8478082356CB82742ADA /* TripDetector.swift in Sources */,
 				2BBA1A4DF0EB54C89AFF76D6 /* TierReviewView.swift in Sources */,
 				95DCB3C450D75CE4979AEEBF /* PhotoDeletionService.swift in Sources */,
 				BEE0F7C7B5075318AAC174A0 /* ThumbnailLoader.swift in Sources */,
@@ -297,6 +320,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				70A05C44E0715DBFAB926109 /* TripDetectorTests.swift in Sources */,
 				7B165DC85D1D5D1596B55F20 /* PhotoDeletionServiceTests.swift in Sources */,
 				908F562000B6540DBE376F87 /* TierAssignerTests.swift in Sources */,
 				37D16711C39F52CB98B4AE8A /* ScoringAndClusteringTests.swift in Sources */,
