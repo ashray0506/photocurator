@@ -34,6 +34,8 @@
 		23EA160D6EFC5CB0A2B633A7 /* TripsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD84A737F3855915ACEEEC80 /* TripsView.swift */; };
 		7E811926C9935C149F9D84F6 /* TripDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98DCD10A478D53C7BB5D16B6 /* TripDetailView.swift */; };
 		70A05C44E0715DBFAB926109 /* TripDetectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0D691FD41E85632A8A48E5E /* TripDetectorTests.swift */; };
+		D5D3B967563854258253A8FE /* PlaceSegmenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0399D1A7EBC0595196EC9FAE /* PlaceSegmenter.swift */; };
+		A590396117035303BB776A8E /* PlaceGeocoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DF2E9CA47FA59E2B9072945 /* PlaceGeocoder.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -70,6 +72,8 @@
 		DD84A737F3855915ACEEEC80 /* TripsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripsView.swift; sourceTree = "<group>"; };
 		98DCD10A478D53C7BB5D16B6 /* TripDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripDetailView.swift; sourceTree = "<group>"; };
 		F0D691FD41E85632A8A48E5E /* TripDetectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripDetectorTests.swift; sourceTree = "<group>"; };
+		0399D1A7EBC0595196EC9FAE /* PlaceSegmenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceSegmenter.swift; sourceTree = "<group>"; };
+		7DF2E9CA47FA59E2B9072945 /* PlaceGeocoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceGeocoder.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -190,6 +194,8 @@
 		D9A5733860AD5C08BCD0F5F9 /* Report */ = {
 			isa = PBXGroup;
 			children = (
+				7DF2E9CA47FA59E2B9072945 /* PlaceGeocoder.swift */,
+				0399D1A7EBC0595196EC9FAE /* PlaceSegmenter.swift */,
 				C02457A587C7567DA2AAD8ED /* PhotoBookExporter.swift */,
 				4FFBD31C5F765CE4BA11123C /* TripDetector.swift */,
 				225B9DB2AE9D56AEA85767BC /* ScanReport.swift */,
@@ -288,6 +294,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A590396117035303BB776A8E /* PlaceGeocoder.swift in Sources */,
+				D5D3B967563854258253A8FE /* PlaceSegmenter.swift in Sources */,
 				7E811926C9935C149F9D84F6 /* TripDetailView.swift in Sources */,
 				23EA160D6EFC5CB0A2B633A7 /* TripsView.swift in Sources */,
 				79BE436EA5E654C0A00C8364 /* Trip.swift in Sources */,

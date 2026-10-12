@@ -1,9 +1,9 @@
 import SwiftUI
 import Photos
 
-/// One trip, grouped by day, with PDF export (a simplified PRD §10.6/§10.9:
-/// one section per day with a photo grid; no AI captions or route map yet —
-/// see PhotoBookExporter for what's deferred and why).
+/// One trip, grouped by day with place-segment names (PRD §10.2/§10.3), and
+/// PDF export (a simplified PRD §10.6/§10.9: no AI captions or route map
+/// yet — see PhotoBookExporter for what's deferred and why).
 struct TripDetailView: View {
     let trip: Trip
     @EnvironmentObject private var scanner: LibraryScanner
@@ -62,9 +62,18 @@ struct TripDetailView: View {
     }
 
     private func daySection(_ day: Date, _ dayPhotos: [PhotoRecord]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(day, format: .dateTime.weekday(.wide).month().day())
-                .font(.headline)
+        let segments = trip.segments(for: day)
+        let placeNames = segments.compactMap(\.placeName)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(day, format: .dateTime.weekday(.wide).month().day())
+                    .font(.headline)
+                if !placeNames.isEmpty {
+                    Text("· \(placeNames.joined(separator: " · "))")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 110, maximum: 160), spacing: 8)], spacing: 8) {
                 ForEach(dayPhotos) { record in
                     thumbnailCell(record)

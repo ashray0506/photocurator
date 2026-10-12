@@ -4,7 +4,8 @@ macOS app that curates a Photos library and drafts a chronological travel book.
 Implements the PRD in `PRD AI Travel Photo Book and Library Curator (macOS).md`.
 
 **Status: M1 (scanner) + M3 (preview grids) + M5 (deletion) complete, plus a
-simplified trip/album builder (M2+M7, adapted — see below).**
+trip/album builder with GPS place segmentation and reverse geocoding
+(M2 + part of M7 — see below for what's still deferred).**
 
 ## Requirements
 
@@ -50,27 +51,39 @@ Tapping a tier in the report opens its review screen (PRD §6):
 ## Trips (the "build an album" feature)
 
 A second tab, **Trips**, alongside the scan/curate tab. Tap "Find Trips" to
-detect candidates from the survivor photos (anything not in Tier 1/2),
-name and save the ones you want, then open a trip to see it grouped by day
-and export a PDF.
+detect candidates from the survivor photos (anything not in Tier 1/2), name
+one (it suggests a real place name, resolved by reverse geocoding) and save
+it, then open a trip to see it grouped by day — each day labelled with its
+place segments — and export a PDF.
 
-**Trip detection is date-gap based, not GPS-based**, which departs from
-PRD §10.2's day → GPS-segment → reverse-geocoded-place pipeline. On this
-library, the vast majority of days have no location data at all (see the
-scan report), so GPS segmentation would produce almost nothing. Instead,
-`TripDetector` finds runs of active days separated by at least `minGapDays`
-(default 3) of silence, and keeps runs with at least `minPhotosToQualify`
-(default 8) photos. GPS is used opportunistically (a trip's location badge)
-but a trip is never required to have any.
+**Trip detection uses GPS, per PRD §10's full design** (an earlier version
+of this feature used date gaps only, based on a stale scan report that
+undercounted this library's GPS coverage — recent years here are actually
+85–94% GPS-covered). `TripDetector` now combines two boundary signals:
+
+1. A silent gap of at least `minGapDays` (default 3) between active days, or
+2. A GPS jump of at least `tripPlaceJumpDistance` (default 50km) between
+   consecutive active days, even with **no** date gap — this catches a
+   same-week trip to another city that pure date-gap detection would merge
+   into ordinary life before and after it.
+
+Within a trip, `PlaceSegmenter` splits each day into stops by time and
+distance (PRD §10.2: ~500m / 30 min — separate settings from
+`SimilarityClusterer`'s near-duplicate thresholds, which happen to use the
+same defaults for an unrelated purpose), and `PlaceGeocoder` reverse-geocodes
+each stop's centroid to a name like "Gangnam, Seoul" (PRD §10.3), cached
+in-memory per session and persisted once a trip is saved. A day or trip with
+no GPS at all simply falls back to the date-gap signal and no place name —
+GPS is used where available, never required.
 
 **What the exported PDF has**: a cover page (trip name, day/photo counts)
-and one page per day with a simple photo grid. **What it doesn't have yet**,
-versus the full PRD §10:
+and one page per day with a place-name subtitle and a simple photo grid.
+**What it doesn't have yet**, versus the full PRD §10:
 
 - No AI-written day titles or captions (§10.5) — this needs a decision about
   sending trip text to the Anthropic API (§14), not just engineering work.
-- No MapKit route map per day (§10.6) — not worth building against a library
-  with this little GPS coverage; would need real location data to matter.
+- No MapKit route map per day (§10.6) — now that place data is wired up,
+  this is a reasonable next step.
 - No "swap photo for another in the cluster" or inline caption editing (§10.8).
 - Fixed page size/layout rather than the PRD's A4/8x10/square + bleed choice
   (§14 open question).

@@ -35,6 +35,21 @@ struct CuratorSettings: Codable, Equatable, Sendable {
     /// (PRD §9.2: when unsure, keep).
     var junkConfidenceMin = 0.80
 
+    // MARK: Place segmentation and trips (PRD §10.2)
+
+    /// Within a day, photos more than this far apart in time start a new
+    /// place segment. Separate from `clusterMaxTimeGap` (PRD §7): that one
+    /// decides whether two photos are near-duplicates, this one decides
+    /// whether they belong to the same stop on a trip.
+    var placeSegmentMaxTimeGap: TimeInterval = 30 * 60
+    /// Within a day, photos more than this far apart (metres) start a new
+    /// place segment.
+    var placeSegmentMaxDistance: CLLocationDistanceValue = 500
+    /// A trip boundary forms when consecutive active days jump at least this
+    /// far (metres), even with no date gap -- catches a same-week trip to
+    /// another city (PRD §10, adapted for GPS-rich libraries).
+    var tripPlaceJumpDistance: CLLocationDistanceValue = 50_000
+
     // MARK: Clustering (PRD §7)
 
     /// Primary signal: photos more than this far apart in time never cluster.

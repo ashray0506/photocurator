@@ -174,6 +174,7 @@ final class LibraryScanner: ObservableObject {
     // MARK: Trips
 
     @Published private(set) var trips: [Trip] = []
+    private let geocoder = PlaceGeocoder()
 
     /// Loads saved trips from the cache. Call once after init (or after a
     /// scan, harmlessly — trips are independent of scan results).
@@ -184,9 +185,12 @@ final class LibraryScanner: ObservableObject {
     /// Runs `TripDetector` over the current survivors and returns candidates
     /// that do not already overlap a saved trip's date range, so re-running
     /// detection after naming some trips does not re-offer the same range.
+    /// Place segments (PRD §10.2) are computed here, geocoded only once the
+    /// candidate is actually saved (`saveTrip`) — geocoding every candidate
+    /// up front would fire network requests for trips the user never keeps.
     func detectTripCandidates(detector: TripDetector = TripDetector()) -> [TripDetector.Candidate] {
         let survivors = records.filter { $0.tier != .tier1 && $0.tier != .tier2 }
-        let candidates = detector.detect(in: survivors)
+        let candidates = detector.detect(in: survivors, settings: settings)
         return candidates.filter { candidate in
             !trips.contains { trip in
                 trip.startDay <= candidate.endDay && candidate.startDay <= trip.endDay
@@ -194,12 +198,58 @@ final class LibraryScanner: ObservableObject {
         }
     }
 
-    /// Confirms a candidate as a named trip and persists it.
-    func saveTrip(name: String, candidate: TripDetector.Candidate) {
+    /// Confirms a candidate as a named trip and persists it. The caller
+    /// (the naming sheet) has already resolved place names while the user
+    /// was looking at the sheet, since it needs them anyway to suggest a
+    /// name — `saveTrip` reuses that result instead of geocoding a second
+    /// time.
+    func saveTrip(name: String, candidate: TripDetector.Candidate,
+                 placeSegmentsByDay: [String: [TripPlaceSegment]]) {
         let trip = Trip(name: name, startDay: candidate.startDay, endDay: candidate.endDay,
-                        photoIds: candidate.photoIds)
+                        photoIds: candidate.photoIds, placeSegmentsByDay: placeSegmentsByDay)
         trips.insert(trip, at: 0)
         try? cache?.saveTrip(trip)
+    }
+
+    /// Reverse-geocodes every segment's centroid and converts to the
+    /// persisted, dictionary-keyed shape `Trip` stores. Exposed so the
+    /// naming sheet can resolve once and hand the result to `saveTrip`.
+    func resolvePlaceNames(
+        for segmentsByDay: [Date: [PlaceSegmenter.Segment]]
+    ) async -> [String: [TripPlaceSegment]] {
+        // Flatten to one ordered list so geocoding runs with one shared
+        // concurrency cap across the whole trip, not per day.
+        var flatSegments: [(day: Date, segment: PlaceSegmenter.Segment)] = []
+        for (day, segments) in segmentsByDay {
+            for segment in segments { flatSegments.append((day, segment)) }
+        }
+
+        let locations = flatSegments.map { $0.segment.centroid }
+        var names: [PlaceGeocoder.PlaceName?] = []
+        // Geocode only the segments that actually have a centroid; keep
+        // positions aligned so results can be zipped back afterward.
+        let locatable = locations.compactMap { $0 }
+        let resolved = await geocoder.names(for: locatable)
+        var resolvedIterator = resolved.makeIterator()
+        for location in locations {
+            names.append(location != nil ? resolvedIterator.next() : nil)
+        }
+
+        var result: [String: [TripPlaceSegment]] = [:]
+        for (index, entry) in flatSegments.enumerated() {
+            let placeName: String?
+            if case .resolved(let name) = names[index] { placeName = name } else { placeName = nil }
+            let stored = TripPlaceSegment(id: entry.segment.id.uuidString,
+                                          placeName: placeName,
+                                          startDate: entry.segment.startDate,
+                                          endDate: entry.segment.endDate,
+                                          photoIds: entry.segment.photoIds)
+            result[Trip.dayKey(entry.day), default: []].append(stored)
+        }
+        for key in result.keys {
+            result[key]?.sort { $0.startDate < $1.startDate }
+        }
+        return result
     }
 
     func renameTrip(id: String, to newName: String) {

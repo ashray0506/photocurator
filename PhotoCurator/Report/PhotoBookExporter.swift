@@ -53,7 +53,9 @@ struct PhotoBookExporter {
 
         for entry in days {
             let images = await loadFullImages(for: entry.photos)
-            drawDayPage(context: context, mediaBox: mediaBox, day: entry.day, images: images)
+            let placeNames = trip.segments(for: entry.day).compactMap(\.placeName)
+            drawDayPage(context: context, mediaBox: mediaBox, day: entry.day,
+                       placeNames: placeNames, images: images)
         }
 
         context.closePDF()
@@ -99,7 +101,8 @@ struct PhotoBookExporter {
         context.endPDFPage()
     }
 
-    private func drawDayPage(context: CGContext, mediaBox: CGRect, day: Date, images: [NSImage]) {
+    private func drawDayPage(context: CGContext, mediaBox: CGRect, day: Date,
+                             placeNames: [String], images: [NSImage]) {
         context.beginPDFPage(nil)
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
@@ -114,8 +117,23 @@ struct PhotoBookExporter {
         let titleY = mediaBox.height - margin - titleSize.height
         title.draw(at: CGPoint(x: margin, y: titleY), withAttributes: titleAttributes)
 
+        // Place names (PRD §10.3), shown as a subtitle under the date when
+        // any segment that day resolved to a name.
+        var subtitleHeight: CGFloat = 0
+        if !placeNames.isEmpty {
+            let subtitle = placeNames.joined(separator: " · ") as NSString
+            let subtitleAttributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 14),
+                .foregroundColor: NSColor.darkGray
+            ]
+            let subtitleSize = subtitle.size(withAttributes: subtitleAttributes)
+            subtitle.draw(at: CGPoint(x: margin, y: titleY - subtitleSize.height - 4),
+                          withAttributes: subtitleAttributes)
+            subtitleHeight = subtitleSize.height + 4
+        }
+
         // Simple grid: up to 6 photos per page, 2 columns.
-        let gridTop = titleY - 20
+        let gridTop = titleY - subtitleHeight - 20
         let columns = 2
         let cellSpacing: CGFloat = 12
         let cellWidth = (mediaBox.width - margin * 2 - cellSpacing * CGFloat(columns - 1)) / CGFloat(columns)
