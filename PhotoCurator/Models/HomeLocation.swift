@@ -18,10 +18,17 @@ struct HomeLocation: Codable, Identifiable, Sendable, Hashable {
     /// Only meaningful for auto-detected homes: how many distinct days of
     /// photos were seen within this cluster, which is what qualified it.
     var distinctDayCount: Int
+    /// The observed residency span (auto-detected homes only) — e.g. this
+    /// place was home from this date to that date. People move cities or
+    /// countries over the years, so a library can have several homes, each
+    /// with its own span rather than one that's "always" been home.
+    var firstDay: Date?
+    var lastDay: Date?
     var createdAt: Date
 
     init(id: String = UUID().uuidString, name: String, latitude: Double, longitude: Double,
         radius: Double, isAutoDetected: Bool, distinctDayCount: Int = 0,
+        firstDay: Date? = nil, lastDay: Date? = nil,
         createdAt: Date = Date()) {
         self.id = id
         self.name = name
@@ -30,6 +37,8 @@ struct HomeLocation: Codable, Identifiable, Sendable, Hashable {
         self.radius = radius
         self.isAutoDetected = isAutoDetected
         self.distinctDayCount = distinctDayCount
+        self.firstDay = firstDay
+        self.lastDay = lastDay
         self.createdAt = createdAt
     }
 

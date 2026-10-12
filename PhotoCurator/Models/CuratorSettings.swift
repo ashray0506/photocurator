@@ -57,6 +57,18 @@ struct CuratorSettings: Codable, Equatable, Sendable {
     /// qualify as an auto-detected home -- a single long vacation should not
     /// get mistaken for home just because it generated many photos.
     var homeMinDistinctDays = 30
+    /// The distinct-day count above must be reached *within a continuous
+    /// window of this length* (days), not just somewhere across the whole
+    /// library. Without this, a place visited for a handful of days every
+    /// year or two over a decade (a relative's house, a repeat vacation
+    /// spot) can accumulate enough total days to look like a home even
+    /// though it was never actually lived in. Default ~18 months: long
+    /// enough to cover a real move, short enough that two genuinely
+    /// different homes (e.g. before/after relocating) are judged on their
+    /// own residency period rather than blended together. People who move
+    /// countries over the years are expected to produce *multiple* home
+    /// candidates, each qualifying within its own window.
+    var homeWindowDays = 548
 
     // MARK: Book photo selection (PRD §10.4)
 

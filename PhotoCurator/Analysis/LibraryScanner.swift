@@ -225,19 +225,26 @@ final class LibraryScanner: ObservableObject {
             }
 
             let names = await geocoder.names(for: candidates.map(\.location))
+            let yearFormatter = DateFormatter()
+            yearFormatter.dateFormat = "yyyy"
+
             for (index, candidate) in candidates.enumerated() {
-                let resolvedName: String
-                if case .resolved(let name) = names[index] {
-                    resolvedName = name
-                } else {
-                    resolvedName = "Home \(index + 1)"
-                }
+                let placeName: String?
+                if case .resolved(let name) = names[index] { placeName = name } else { placeName = nil }
+
+                let startYear = yearFormatter.string(from: candidate.firstDay)
+                let endYear = yearFormatter.string(from: candidate.lastDay)
+                let yearRange = startYear == endYear ? startYear : "\(startYear)–\(endYear)"
+                let resolvedName = placeName.map { "\($0) (\(yearRange))" } ?? "Home \(index + 1) (\(yearRange))"
+
                 let home = HomeLocation(name: resolvedName,
                                         latitude: candidate.location.coordinate.latitude,
                                         longitude: candidate.location.coordinate.longitude,
                                         radius: settings.homeRadius,
                                         isAutoDetected: true,
-                                        distinctDayCount: candidate.dayCount)
+                                        distinctDayCount: candidate.dayCount,
+                                        firstDay: candidate.firstDay,
+                                        lastDay: candidate.lastDay)
                 homeLocations.append(home)
                 try? cache?.saveHomeLocation(home)
             }

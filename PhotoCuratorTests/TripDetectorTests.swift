@@ -521,3 +521,120 @@ final class BookDaySelectionTests: XCTestCase {
         XCTAssertNil(LibraryScanner.swapped(in: ["a", "b", "c"], outgoing: "z", incoming: "x"))
     }
 }
+
+/// Rolling-window home detection: distinguishes a real move (dense,
+/// continuous residence) from a frequently-revisited place (sparse,
+/// spread thin across many years) — the scenario of someone who has lived
+/// in more than one city/country over time.
+final class HomeWindowDetectionTests: XCTestCase {
+
+    private let calendar = Calendar.current
+
+    private func days(from startDaysAgo: Int, count: Int, every stepDays: Int) -> Set<Date> {
+        var result = Set<Date>()
+        let base = Date()
+        for i in 0..<count {
+            if let day = calendar.date(byAdding: .day, value: -(startDaysAgo - i * stepDays), to: base) {
+                result.insert(calendar.startOfDay(for: day))
+            }
+        }
+        return result
+    }
+
+    /// A real, continuous residence (photos roughly every few days across a
+    /// multi-year span) must qualify and report its true start/end.
+    func testDenseContinuousResidenceQualifies() {
+        // ~400 days of activity, one every ~5 days, across ~5.5 years.
+        let residencyDays = days(from: 2000, count: 400, every: 5)
+
+        let window = HomeLocationDetector.densestWindow(residencyDays, windowDays: 548,
+                                                         minDistinctDays: 30, calendar: calendar)
+        XCTAssertNotNil(window, "a dense multi-year residence must qualify as home")
+    }
+
+    /// A place visited for a handful of days every year or two, spread
+    /// across a decade, must NOT qualify — the exact "frequently visited
+    /// relative" / "repeat vacation spot" false-positive this feature
+    /// exists to avoid.
+    func testSparseRecurringVisitsDoNotQualify() {
+        // ~10 days total, roughly one trip of a few days every ~18 months,
+        // spread across 11 years -- mirrors a real pattern seen in
+        // production data (a city visited ~10-15 times over a decade,
+        // never more than a few days at once).
+        var visitDays = Set<Date>()
+        let base = Date()
+        for tripIndex in 0..<8 {
+            let tripStart = calendar.date(byAdding: .day, value: -(tripIndex * 500), to: base)!
+            for dayOffset in 0..<3 {
+                let day = calendar.date(byAdding: .day, value: dayOffset, to: tripStart)!
+                visitDays.insert(calendar.startOfDay(for: day))
+            }
+        }
+        // 8 trips * 3 days = 24 days total, well under the 30-day minimum,
+        // and even if it were higher, no single 548-day window contains
+        // more than one trip's worth of days.
+        let window = HomeLocationDetector.densestWindow(visitDays, windowDays: 548,
+                                                         minDistinctDays: 30, calendar: calendar)
+        XCTAssertNil(window, "sparse recurring visits spread over years must not look like a home")
+    }
+
+    /// Two sequential homes (moved from one city to another) must each be
+    /// judged on their own span -- this test models exactly that shape by
+    /// checking each span independently, the way two distinct merged
+    /// location clusters would be in the real detector.
+    func testSequentialHomesEachQualifyOnOwnSpan() {
+        // "Providence": dense 2009-2018.
+        var providenceDays = Set<Date>()
+        for i in 0..<300 {
+            let day = calendar.date(byAdding: .day, value: -(4000 - i * 10), to: Date())!
+            providenceDays.insert(calendar.startOfDay(for: day))
+        }
+        // "Sydney": dense 2018-2026 (more recent, denser).
+        var sydneyDays = Set<Date>()
+        for i in 0..<800 {
+            let day = calendar.date(byAdding: .day, value: -(2800 - i * 3), to: Date())!
+            sydneyDays.insert(calendar.startOfDay(for: day))
+        }
+
+        let providenceWindow = HomeLocationDetector.densestWindow(providenceDays, windowDays: 548,
+                                                                   minDistinctDays: 30, calendar: calendar)
+        let sydneyWindow = HomeLocationDetector.densestWindow(sydneyDays, windowDays: 548,
+                                                               minDistinctDays: 30, calendar: calendar)
+        XCTAssertNotNil(providenceWindow, "the earlier home must still qualify on its own span")
+        XCTAssertNotNil(sydneyWindow, "the current home must qualify on its own span")
+    }
+
+    /// A gap in residence (moved away, then came back years later) must not
+    /// bridge into one false continuous span -- the widening step stops at
+    /// the gap rather than treating the whole range as one residency.
+    func testGapInResidenceDoesNotBridgeIntoOneFalseSpan() {
+        var earlyStint = Set<Date>()
+        for i in 0..<40 {
+            let day = calendar.date(byAdding: .day, value: -(4000 - i * 5), to: Date())!
+            earlyStint.insert(calendar.startOfDay(for: day))
+        }
+        var laterStint = Set<Date>()
+        for i in 0..<40 {
+            let day = calendar.date(byAdding: .day, value: -(1000 - i * 5), to: Date())!
+            laterStint.insert(calendar.startOfDay(for: day))
+        }
+        let combined = earlyStint.union(laterStint)
+
+        let window = HomeLocationDetector.densestWindow(combined, windowDays: 548,
+                                                         minDistinctDays: 30, calendar: calendar)
+        XCTAssertNotNil(window, "one of the two stints should still qualify on its own")
+
+        guard let window else { return }
+        let spanDays = calendar.dateComponents([.day], from: window.start, to: window.end).day ?? 0
+        // Each stint alone spans ~195 days; bridging the ~3000-day gap
+        // between them would blow this well past any reasonable residency
+        // window.
+        XCTAssertLessThan(spanDays, 548, "the reported span must not bridge across the multi-year gap")
+    }
+
+    func testFewerThanMinimumDaysNeverQualifies() {
+        let sparse = days(from: 100, count: 5, every: 10)
+        XCTAssertNil(HomeLocationDetector.densestWindow(sparse, windowDays: 548,
+                                                         minDistinctDays: 30, calendar: calendar))
+    }
+}

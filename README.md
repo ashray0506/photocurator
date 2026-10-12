@@ -98,10 +98,19 @@ undercounted this library's GPS coverage — recent years here are actually
 A day is **home** when the majority of its located photos fall within a
 `HomeLocation`'s radius; home days are excluded before boundary detection
 runs at all, and themselves act as a boundary (a few quiet days at home
-between two trips separates them even if that's below `minGapDays`). Home
-locations are auto-detected from GPS density — the signal is *spread over
-many distinct days*, not photo count, so a single heavy vacation never
-outranks months of sparser home life — and editable/addable in Settings
+between two trips separates them even if that's below `minGapDays`).
+
+Home locations are auto-detected, and the detector finds as many distinct
+homes as the data supports — people move cities or countries over the years.
+Two signals combine: enough distinct days overall (not photo count, so a
+heavy vacation never outranks sparser home life), *and* those days must
+actually cluster densely within some continuous ~18-month window
+(`homeWindowDays`), not just add up across the whole library. Without the
+second check, a place visited for a few days every year or two over a decade
+— a relative's house, a repeat vacation spot — can rack up enough total days
+to look like a home despite never being dense in any one stretch. Detected
+homes carry the residency span they were found in (e.g. "Providence, RI
+(2009–2018)", "Sydney, Australia (2018–2026)"), editable/addable in Settings
 (radius per home, default 50km).
 
 Within a trip, `PlaceSegmenter` splits each day into stops by time and
