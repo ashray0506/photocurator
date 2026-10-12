@@ -42,6 +42,7 @@
 		D30C78E5E1F651038625E47A /* TripWrapUpView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D2F8A972C5050C6B149A692 /* TripWrapUpView.swift */; };
 		4C45BBEAD49353059B652B37 /* ToastCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0B64C262CC559A28DCE078B /* ToastCenter.swift */; };
 		ACEEA7F6FA075A55985AC432 /* DayDecorationBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43E9E24DC6505831AB786274 /* DayDecorationBar.swift */; };
+		81C95CA19E9B56D996F99EA8 /* TripHeroCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28D98EEB9C7651839F7879E7 /* TripHeroCard.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -86,6 +87,7 @@
 		3D2F8A972C5050C6B149A692 /* TripWrapUpView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripWrapUpView.swift; sourceTree = "<group>"; };
 		B0B64C262CC559A28DCE078B /* ToastCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToastCenter.swift; sourceTree = "<group>"; };
 		43E9E24DC6505831AB786274 /* DayDecorationBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayDecorationBar.swift; sourceTree = "<group>"; };
+		28D98EEB9C7651839F7879E7 /* TripHeroCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripHeroCard.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -142,6 +144,7 @@
 		ED34743005925A0FA7F00246 /* App */ = {
 			isa = PBXGroup;
 			children = (
+				28D98EEB9C7651839F7879E7 /* TripHeroCard.swift */,
 				43E9E24DC6505831AB786274 /* DayDecorationBar.swift */,
 				B0B64C262CC559A28DCE078B /* ToastCenter.swift */,
 				3D2F8A972C5050C6B149A692 /* TripWrapUpView.swift */,
@@ -312,6 +315,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				81C95CA19E9B56D996F99EA8 /* TripHeroCard.swift in Sources */,
 				ACEEA7F6FA075A55985AC432 /* DayDecorationBar.swift in Sources */,
 				4C45BBEAD49353059B652B37 /* ToastCenter.swift in Sources */,
 				D30C78E5E1F651038625E47A /* TripWrapUpView.swift in Sources */,

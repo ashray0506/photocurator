@@ -44,8 +44,17 @@ struct TripDetector {
     var minGapDays = 3
 
     /// Below this many photos, a run of active away days is ordinary life
-    /// rather than a trip worth a book.
-    var minPhotosToQualify = 8
+    /// rather than a trip worth a book. Default raised from the original 8:
+    /// an uncurated library (nothing moved to Tier 1/2 yet) can have plenty
+    /// of small, scattered clusters of old, non-trip photos that technically
+    /// clear a low bar — a real trip usually produces more than a handful.
+    var minPhotosToQualify = 25
+
+    /// Below this many distinct days, a run is a single bulk-imported or
+    /// bulk-captured day (a photo scan session, an album restore, an event)
+    /// rather than a multi-day trip — even if its photo count alone is high.
+    /// A real trip is lived across more than one day.
+    var minDayCount = 2
 
     /// `records` need not be sorted. Only survivors (not Tier 1/2) are
     /// meaningful for a book, but detection runs over whatever is passed.
@@ -108,6 +117,10 @@ struct TripDetector {
             let dayPhotos = days.flatMap { photosByDay[$0] ?? [] }
             let photoIds = dayPhotos.map(\.id)
             guard photoIds.count >= minPhotosToQualify else { return nil }
+            // A single bulk-imported/captured day (a photo scan session, an
+            // album restore) can have a high photo count without being a
+            // trip at all — a real trip spans more than one day.
+            guard days.count >= minDayCount else { return nil }
 
             var segmentsByDay: [Date: [PlaceSegmenter.Segment]] = [:]
             for day in days {

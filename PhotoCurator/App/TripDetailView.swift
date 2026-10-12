@@ -13,6 +13,7 @@ struct TripDetailView: View {
     @State private var isExporting = false
     @State private var exportError: String?
     @State private var swapRequest: SwapRequest?
+    @State private var scrollToBookDraft = false
 
     private var photos: [PhotoRecord] { scanner.photos(in: trip) }
 
@@ -25,15 +26,23 @@ struct TripDetailView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                header
-                ForEach(days, id: \.day) { entry in
-                    daySection(entry.day, entry.photos)
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    header
+                    Color.clear.frame(height: 0).id("book-draft-top")
+                    ForEach(days, id: \.day) { entry in
+                        daySection(entry.day, entry.photos)
+                    }
                 }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .onChange(of: scrollToBookDraft) { _, shouldScroll in
+                guard shouldScroll else { return }
+                withAnimation { proxy.scrollTo("book-draft-top", anchor: .top) }
+                scrollToBookDraft = false
+            }
         }
         .navigationTitle(trip.name)
         .toolbar {
@@ -63,10 +72,8 @@ struct TripDetailView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("\(days.count) days · \(photos.count.formatted()) photos")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+        TripHeroCard(trip: trip, days: days, photos: photos) {
+            scrollToBookDraft = true
         }
     }
 

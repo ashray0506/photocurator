@@ -37,6 +37,7 @@ final class TripDetectorTests: XCTestCase {
 
     func testGapAtOrAboveThresholdSplitsIntoTwoTrips() {
         var detector = TripDetector()
+        detector.minDayCount = 1
         detector.minGapDays = 3
         detector.minPhotosToQualify = 2
 
@@ -70,6 +71,7 @@ final class TripDetectorTests: XCTestCase {
 
     func testHasAnyLocationReflectsAnyDayInRange() {
         var detector = TripDetector()
+        detector.minDayCount = 1
         detector.minPhotosToQualify = 1
 
         var located = record("a", daysFromEpoch: 0)
@@ -84,6 +86,7 @@ final class TripDetectorTests: XCTestCase {
 
     func testNoLocationAnywhereInRangeIsFalse() {
         var detector = TripDetector()
+        detector.minDayCount = 1
         detector.minPhotosToQualify = 1
 
         let candidates = detector.detect(in: [record("a", daysFromEpoch: 0)])
@@ -97,6 +100,7 @@ final class TripDetectorTests: XCTestCase {
     /// date-gap detector would miss entirely.
     func testLargePlaceJumpSplitsEvenWithNoDateGap() {
         var detector = TripDetector()
+        detector.minDayCount = 1
         detector.minGapDays = 3   // would normally require a 3-day gap
         detector.minPhotosToQualify = 1
         var settings = CuratorSettings.default
@@ -153,6 +157,7 @@ final class TripDetectorTests: XCTestCase {
     /// for the naming sheet to geocode.
     func testCandidateCarriesPerDaySegments() {
         var detector = TripDetector()
+        detector.minDayCount = 1
         detector.minPhotosToQualify = 1
 
         let records = [
@@ -216,6 +221,7 @@ final class TripDetectorTests: XCTestCase {
     /// silent-day count alone would not have crossed `minGapDays`.
     func testHomeDaysSeparateTwoTripsEvenBelowMinGap() {
         var detector = TripDetector()
+        detector.minDayCount = 1
         detector.minGapDays = 5   // deliberately high; the home days are what separates these
         detector.minPhotosToQualify = 1
 
@@ -239,6 +245,7 @@ final class TripDetectorTests: XCTestCase {
     /// participates in detection via the date-gap signal.
     func testDayWithNoGPSIsNeverClassifiedAsHome() {
         var detector = TripDetector()
+        detector.minDayCount = 1
         detector.minPhotosToQualify = 1
         let homes = [home(latitude: 37.5665, longitude: 126.9780)]
 
@@ -251,6 +258,7 @@ final class TripDetectorTests: XCTestCase {
     /// an away day — the majority rule, not "any home photo disqualifies".
     func testMajorityAwayDayIsNotHome() {
         var detector = TripDetector()
+        detector.minDayCount = 1
         detector.minPhotosToQualify = 1
         let homeCoord = (latitude: 37.5665, longitude: 126.9780)
         let awayCoord = (latitude: 35.1796, longitude: 129.0756)
@@ -636,5 +644,53 @@ final class HomeWindowDetectionTests: XCTestCase {
         let sparse = days(from: 100, count: 5, every: 10)
         XCTAssertNil(HomeLocationDetector.densestWindow(sparse, windowDays: 548,
                                                          minDistinctDays: 30, calendar: calendar))
+    }
+}
+
+/// A single bulk-imported/captured day (a photo scan session, an album
+/// restore) must not look like a trip regardless of photo count -- a real
+/// trip spans more than one day. Models the exact shape found in a real
+/// library: a single old day with 85 photos and zero clusters.
+final class SingleDayBulkImportTests: XCTestCase {
+
+    private func record(_ id: String, daysFromEpoch: Int) -> PhotoRecord {
+        var record = PhotoRecord(id: id)
+        record.creationDate = Date(timeIntervalSince1970: 0)
+            .addingTimeInterval(TimeInterval(daysFromEpoch * 86400 + 43200))
+        return record
+    }
+
+    func testHighPhotoCountSingleDayDoesNotQualify() {
+        var detector = TripDetector()
+        detector.minPhotosToQualify = 25
+
+        let records = (0..<85).map { record("p\($0)", daysFromEpoch: 0) }
+        let candidates = detector.detect(in: records)
+
+        XCTAssertTrue(candidates.isEmpty, "an 85-photo single day must not surface as a trip")
+    }
+
+    func testMultiDaySpanWithSamePhotoCountStillQualifies() {
+        var detector = TripDetector()
+        detector.minPhotosToQualify = 25
+
+        // Same total photo count as the single-day case, spread over 3 days.
+        var records: [PhotoRecord] = []
+        for day in 0..<3 {
+            for i in 0..<30 {
+                records.append(record("p\(day)-\(i)", daysFromEpoch: day))
+            }
+        }
+        let candidates = detector.detect(in: records)
+
+        XCTAssertEqual(candidates.count, 1, "the same photo volume spread over real days should still qualify")
+    }
+
+    func testDefaultThresholdsRejectSmallScatteredClusters() {
+        // Uses the real default (25 photos, 2+ days) -- a small cluster
+        // like the "9 photos on one day" case from production data.
+        let detector = TripDetector()
+        let records = (0..<9).map { record("p\($0)", daysFromEpoch: 0) }
+        XCTAssertTrue(detector.detect(in: records).isEmpty)
     }
 }
