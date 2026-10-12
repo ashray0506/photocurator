@@ -24,6 +24,10 @@
 		2A94750A3D08518CB9BDC751 /* ScanReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 225B9DB2AE9D56AEA85767BC /* ScanReport.swift */; };
 		908F562000B6540DBE376F87 /* TierAssignerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EA59FD242B05935B18355B3 /* TierAssignerTests.swift */; };
 		37D16711C39F52CB98B4AE8A /* ScoringAndClusteringTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C914311C6CFF56FD977210AE /* ScoringAndClusteringTests.swift */; };
+		BEE0F7C7B5075318AAC174A0 /* ThumbnailLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8221B5E0B60B5331B0529749 /* ThumbnailLoader.swift */; };
+		95DCB3C450D75CE4979AEEBF /* PhotoDeletionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA0081DE4F2C5C668504BEB8 /* PhotoDeletionService.swift */; };
+		2BBA1A4DF0EB54C89AFF76D6 /* TierReviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6954129ED4B9582F95C3E7BC /* TierReviewView.swift */; };
+		7B165DC85D1D5D1596B55F20 /* PhotoDeletionServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 255C8D38672F58CB9C2F7A16 /* PhotoDeletionServiceTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -50,6 +54,10 @@
 		B14A7D78FE0D56C59C917A3E /* PhotoCurator.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PhotoCurator.entitlements; sourceTree = "<group>"; };
 		08E62D6343DE5B9899A86BE0 /* PhotoCurator.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PhotoCurator.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		38FEAA24E02D5601ADDA0436 /* PhotoCuratorTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PhotoCuratorTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		8221B5E0B60B5331B0529749 /* ThumbnailLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailLoader.swift; sourceTree = "<group>"; };
+		FA0081DE4F2C5C668504BEB8 /* PhotoDeletionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoDeletionService.swift; sourceTree = "<group>"; };
+		6954129ED4B9582F95C3E7BC /* TierReviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TierReviewView.swift; sourceTree = "<group>"; };
+		255C8D38672F58CB9C2F7A16 /* PhotoDeletionServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoDeletionServiceTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -106,6 +114,7 @@
 		ED34743005925A0FA7F00246 /* App */ = {
 			isa = PBXGroup;
 			children = (
+				6954129ED4B9582F95C3E7BC /* TierReviewView.swift */,
 				6B360375B1A05A91961E3F8C /* PhotoCuratorApp.swift */,
 				ED29FBF0092F57558AE8B9D0 /* ScanView.swift */,
 				9B324DD1E7CF5F9CBC06D01A /* ReportView.swift */,
@@ -126,6 +135,7 @@
 		2E1184B706A650848FDE80BB /* Store */ = {
 			isa = PBXGroup;
 			children = (
+				8221B5E0B60B5331B0529749 /* ThumbnailLoader.swift */,
 				2BEA7B93F93457BA8D734795 /* AnalysisCache.swift */,
 				BA1DD8BBE1CF5E90896C1638 /* PhotoLibraryService.swift */,
 			);
@@ -155,6 +165,7 @@
 		A3B792B20A4956ADB6574B9E /* Tiers */ = {
 			isa = PBXGroup;
 			children = (
+				FA0081DE4F2C5C668504BEB8 /* PhotoDeletionService.swift */,
 				4E7E9298568056698C709545 /* TierAssigner.swift */,
 				42C1CE2C88D255D59ABDFB9B /* BestPhotoScorer.swift */,
 			);
@@ -181,6 +192,7 @@
 		7B2B89D1111452B4A69C2F77 /* PhotoCuratorTests */ = {
 			isa = PBXGroup;
 			children = (
+				255C8D38672F58CB9C2F7A16 /* PhotoDeletionServiceTests.swift */,
 				8EA59FD242B05935B18355B3 /* TierAssignerTests.swift */,
 				C914311C6CFF56FD977210AE /* ScoringAndClusteringTests.swift */,
 			);
@@ -258,6 +270,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				2BBA1A4DF0EB54C89AFF76D6 /* TierReviewView.swift in Sources */,
+				95DCB3C450D75CE4979AEEBF /* PhotoDeletionService.swift in Sources */,
+				BEE0F7C7B5075318AAC174A0 /* ThumbnailLoader.swift in Sources */,
 				7A06FBA275345BFCA0545632 /* PhotoCuratorApp.swift in Sources */,
 				F76919F6872E5DDB830050C0 /* ScanView.swift in Sources */,
 				C7672805B2235CD192F7C749 /* ReportView.swift in Sources */,
@@ -282,6 +297,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7B165DC85D1D5D1596B55F20 /* PhotoDeletionServiceTests.swift in Sources */,
 				908F562000B6540DBE376F87 /* TierAssignerTests.swift in Sources */,
 				37D16711C39F52CB98B4AE8A /* ScoringAndClusteringTests.swift in Sources */,
 			);

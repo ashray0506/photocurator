@@ -48,10 +48,25 @@ final class LibraryScanner: ObservableObject {
     @Published private(set) var report: ScanReport?
     @Published var settings: CuratorSettings = .default
 
+    /// Every analysed photo, kept so tier review screens (PRD §6) can work
+    /// with individual records: previewing, rescuing and deleting. The
+    /// report above is just the aggregate view of this same array.
+    @Published private(set) var records: [PhotoRecord] = []
+
+    let deletionService = PhotoDeletionService()
+
+    /// Kept alongside `records` purely so a rescue or deletion can rebuild
+    /// the report's clustering/face stats without a full rescan — these are
+    /// not derivable from `records` alone (PRD §12's cluster and outfit-split
+    /// counts come from the clusters themselves, not the photos in them).
+    private var lastFaceClusters: [FaceCluster] = []
+    private var lastClusters: [PhotoCluster] = []
+    private var lastOutfitSplitsByDay: [Date: Int] = [:]
+
     private let library = PhotoLibraryService()
     private let quality = ImageQualityAnalyzer()
     private let vision = VisionAnalyzer()
-    private let cache: AnalysisCache?
+    let cache: AnalysisCache?
     private let log = Logger(subsystem: "app.photocurator", category: "scanner")
 
     /// One shared CIContext. Creating one per photo is expensive and leaks GPU
@@ -84,6 +99,76 @@ final class LibraryScanner: ObservableObject {
     func start() {
         guard !isRunning else { return }
         task = Task { await run() }
+    }
+
+    // MARK: Tier review (PRD §6)
+
+    /// All currently-analysed photos in a given tier, newest-captured first,
+    /// so preview grids and deletion operate on the live set rather than a
+    /// stale snapshot from the moment the report was built.
+    func photos(in tier: Tier) -> [PhotoRecord] {
+        records.filter { $0.tier == tier }
+    }
+
+    /// Rescues one photo into Tier 3 for this photo only (PRD §6: "tap to
+    /// rescue an individual photo"). Persisted immediately so the rescue
+    /// survives a rescan even if the user quits before scanning again.
+    func rescue(_ id: String) {
+        guard let index = records.firstIndex(where: { $0.id == id }) else { return }
+        records[index].userOverride = true
+        records[index].tier = .tier3Protected
+        records[index].reason = .favorite
+        try? cache?.save([records[index]])
+        rebuildReport()
+    }
+
+    /// Locks Tier 3 photos out of future scans (PRD §6: "Keep all").
+    /// Tier 3 is never deletable, so this only affects whether the cache
+    /// flags them `confirmed_keep`; it changes no tier assignment.
+    func confirmKeepAll(in tier: Tier) {
+        guard tier == .tier3Protected else { return }
+        let ids = photos(in: tier).map(\.id)
+        try? cache?.confirmKeep(ids: ids)
+    }
+
+    /// Deletes every photo currently in `tier`. Delegates the actual
+    /// PhotoKit call to `PhotoDeletionService`, which independently refuses
+    /// to touch anything tiered as protected — this method's own guard is
+    /// the first line of defense, that refusal is the second.
+    ///
+    /// On success, removes the deleted photos from the in-memory `records`
+    /// and rebuilds the report so the UI reflects the new counts without
+    /// requiring a full rescan.
+    func deleteAll(in tier: Tier,
+                   progress: (@Sendable (Int, Int) -> Void)? = nil) async throws {
+        guard tier != .tier3Protected else { return }
+        let targets = photos(in: tier)
+        guard !targets.isEmpty else { return }
+
+        try await deletionService.delete(targets, cache: cache, progress: progress)
+
+        let deletedIds = Set(targets.map(\.id))
+        records.removeAll { deletedIds.contains($0.id) }
+        rebuildReport()
+    }
+
+    /// Recomputes the published report from the current `records` array,
+    /// without a rescan. Used after a rescue or deletion changes counts.
+    ///
+    /// Clustering/face stats come from the last scan's cluster arrays, which
+    /// are unaffected by a rescue or a within-tier deletion (both only ever
+    /// touch Tier 1/2 members, and clusters are not re-run until the next
+    /// scan) — PRD §12's outfit-split and cluster counts are not derivable
+    /// from `records` alone.
+    private func rebuildReport() {
+        guard let previous = report else { return }
+        report = ScanReport(records: records,
+                            faceClusters: lastFaceClusters,
+                            clusters: lastClusters,
+                            outfitSplitsByDay: lastOutfitSplitsByDay,
+                            specialLandscapeThreshold: previous.specialLandscapeThreshold,
+                            duration: previous.duration,
+                            fromCache: previous.photosFromCache)
     }
 
     // MARK: Pipeline
@@ -201,13 +286,22 @@ final class LibraryScanner: ObservableObject {
             try? cache?.prune(keeping: Set(records.map(\.id)))
 
             let elapsed = clock.now - started
-            report = ScanReport(records: records,
+            let finishedReport = ScanReport(records: records,
                                 faceClusters: faceOutput.clusters,
                                 clusters: clusterOutput.clusters,
                                 outfitSplitsByDay: clusterOutput.outfitSplitsByDay,
                                 specialLandscapeThreshold: context.specialLandscapeThreshold,
                                 duration: elapsed,
                                 fromCache: records.count - fresh.count)
+
+            // Published last and together: the review screens key off
+            // `self.records`, so they must never see a report without the
+            // matching per-photo array behind it.
+            self.records = records
+            self.lastFaceClusters = faceOutput.clusters
+            self.lastClusters = clusterOutput.clusters
+            self.lastOutfitSplitsByDay = clusterOutput.outfitSplitsByDay
+            report = finishedReport
             phase = .finished
             log.notice("Scan finished in \(elapsed.description)")
 

@@ -3,7 +3,7 @@
 macOS app that curates a Photos library and drafts a chronological travel book.
 Implements the PRD in `PRD AI Travel Photo Book and Library Curator (macOS).md`.
 
-**Status: M1 (scanner prototype) complete.**
+**Status: M1 (scanner prototype) + M3 preview grids + M5 deletion complete.**
 
 ## Requirements
 
@@ -20,12 +20,7 @@ Then ⌘R to run, ⌘U to test. On first run macOS asks for Photos access;
 PhotoCurator requests full library access because duplicate detection has to
 compare across the whole library.
 
-## What M1 does
-
-M1 is **read-only**. It performs no deletion: there is no call to
-`PHAssetChangeRequest.deleteAssets` anywhere in the codebase, so no code path
-can remove a photo. Deletion arrives in M5, behind the one-button-per-tier
-review screens.
+## What's implemented
 
 The scan produces the dry-run report that PRD §4.4 and §12 specify:
 
@@ -39,21 +34,33 @@ The scan produces the dry-run report that PRD §4.4 and §12 specify:
 
 "Copy report" puts the whole thing on the clipboard as plain text.
 
+Tapping a tier in the report opens its review screen (PRD §6):
+
+- header with count and estimated disk space freed
+- a 60-photo random sample grid, tap to enlarge, tap to rescue into Tier 3
+- a reason breakdown
+- **Tier 3**: "Keep all" only — there is no delete action anywhere on this
+  tier's screen.
+- **Tier 1 / Tier 2**: "Delete Tier N (count)" → one confirmation sheet
+  ("stay in Recently Deleted for 30 days") → batched
+  `PHAssetChangeRequest.deleteAssets` calls, with progress shown for large
+  batches. macOS shows its own system confirmation on top of this app's.
+
 ## Layout
 
 | Path | Contents |
 | --- | --- |
 | `PhotoCurator/Models` | `PhotoRecord`, tiers and reasons, all tunable thresholds |
-| `PhotoCurator/Store` | SQLite analysis cache, PhotoKit read access |
+| `PhotoCurator/Store` | SQLite analysis cache, PhotoKit read access, thumbnail loading |
 | `PhotoCurator/Analysis` | quality signals, Vision requests, the scan driver |
 | `PhotoCurator/Clustering` | face clustering, similarity clustering + outfit splitting |
-| `PhotoCurator/Tiers` | tier assignment, best-photo scoring |
-| `PhotoCurator/Report` | the M1 report model and its text rendering |
-| `PhotoCurator/App` | SwiftUI scan, report and settings screens |
+| `PhotoCurator/Tiers` | tier assignment, best-photo scoring, the deletion service |
+| `PhotoCurator/Report` | the scan report model and its text rendering |
+| `PhotoCurator/App` | SwiftUI scan, report, tier review and settings screens |
 
 ## Safety design
 
-Two invariants are enforced in code and covered by tests:
+Three invariants are enforced in code and covered by tests:
 
 1. **Tier 3 always wins.** Protection is evaluated before any junk rule, so a
    favorite, album member, edited photo, photo containing a known person, or a
@@ -65,6 +72,13 @@ Two invariants are enforced in code and covered by tests:
    it is never mistaken for a dark, blurry, flat frame and deleted. Tier rules
    treat `nil` as "no evidence of junk", per PRD §9.2 ("when unsure, keep").
    Ranking uses neutral stand-ins so such a photo sits mid-pack instead.
+3. **Deletion has two independent guards.** `TierAssigner` never assigns
+   Tier 3 to anything a delete button touches, and `PhotoDeletionService`
+   separately refuses, at the call site, to delete any record whose tier is
+   `.tier3Protected` — a caller passing the wrong set throws instead of
+   deleting (`PhotoDeletionServiceTests`). The deletion log is written
+   *before* the PhotoKit call, so a crash mid-batch still records what was
+   requested (PRD §9.5).
 
 Metadata-certain junk (a screenshot subtype) is still caught without pixel
 analysis, so the uncertainty guard runs after those checks, not before.
@@ -86,9 +100,17 @@ Against the PRD §13 budgets:
 
 ## Not yet built
 
-M2 route map and day view · M3 Tier 1/2 preview grids · M4 face/outfit review
-UI · M5 deletion with confirmations and logging · M6 personal taste model ·
-M7 AI captions, book layout and PDF export.
+M2 route map and day view · M4 face/outfit review UI (clustering itself exists;
+there's no dedicated screen to inspect/correct face clusters yet) · M6
+personal taste model · M7 AI captions, book layout and PDF export.
 
-The cache schema already carries the `deletion_log` and `confirmed_keep` tables
-M5 needs, so adding deletion will not migrate an existing cache.
+## Known limitation at large libraries
+
+The full pipeline (metadata → quality → junk → faces → clustering → tiers)
+was validated against the PRD's ~10k-photo target. At 50k+ photos a single
+scan session takes proportionally longer; the SQLite cache and bounded
+concurrency should still hold, but this has not yet been measured against
+the PRD §13 budget at that scale. If a scan at this size needs to be run in
+multiple sittings, the cache's resumability (batched writes every 250 photos)
+means progress is not lost — stopping and relaunching picks up from the cache
+rather than re-analysing from scratch.

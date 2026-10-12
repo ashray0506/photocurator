@@ -1,35 +1,38 @@
 import SwiftUI
 
-/// M1's screen: start a scan, watch progress, read the dry-run report.
-///
-/// There is deliberately no delete button anywhere in this milestone. The
-/// tier review screens and their one-button-per-tier actions arrive in M5
-/// (PRD §6), after the M1 report has been used to tune thresholds.
+/// Scan, watch progress, read the dry-run report, then drill into a tier to
+/// review and act on it (PRD §4, §6). The scan and report stay read-only;
+/// `TierReviewView` is the only screen with a delete button.
 struct ScanView: View {
     @EnvironmentObject private var scanner: LibraryScanner
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
+        NavigationStack {
+            VStack(spacing: 0) {
+                header
 
-            Divider()
+                Divider()
 
-            if let report = scanner.report {
-                ReportView(report: report)
-            } else {
-                placeholder
-            }
-        }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                if scanner.isRunning {
-                    Button("Cancel", role: .cancel) { scanner.cancel() }
+                if let report = scanner.report {
+                    ReportView(report: report)
                 } else {
-                    Button(scanner.report == nil ? "Scan Library" : "Rescan") {
-                        scanner.start()
-                    }
-                    .keyboardShortcut(.defaultAction)
+                    placeholder
                 }
+            }
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    if scanner.isRunning {
+                        Button("Cancel", role: .cancel) { scanner.cancel() }
+                    } else {
+                        Button(scanner.report == nil ? "Scan Library" : "Rescan") {
+                            scanner.start()
+                        }
+                        .keyboardShortcut(.defaultAction)
+                    }
+                }
+            }
+            .navigationDestination(for: Tier.self) { tier in
+                TierReviewView(tier: tier)
             }
         }
     }

@@ -10,7 +10,13 @@ import os
 /// Plain SQLite rather than SwiftData: the hot path is a single bulk read of
 /// ~10k rows at launch and batched writes during the scan, and we want explicit
 /// control over the transaction boundaries.
-final class AnalysisCache {
+/// Not actually thread-safe on its own (it wraps one raw SQLite connection
+/// via `db: OpaquePointer?`, mutated in place by every call). Marked
+/// `@unchecked Sendable` because every call in this app is funneled through
+/// the `@MainActor`-isolated `LibraryScanner` or awaited sequentially inside
+/// a single `Task`, so calls are never actually concurrent. If a second
+/// caller is ever added outside that path, this needs a real actor or a lock.
+final class AnalysisCache: @unchecked Sendable {
 
     enum CacheError: Error, LocalizedError {
         case openFailed(String)
@@ -191,6 +197,85 @@ final class AnalysisCache {
         }
         try exec("COMMIT;")
         committed = true
+    }
+
+    /// PRD §9.5: local deletion log, written *before* the PhotoKit call so a
+    /// crash mid-deletion still leaves a record of what was requested.
+    func logDeletion(ids: [String], tier: Tier, reason: TierReason, at date: Date = Date()) throws {
+        guard !ids.isEmpty else { return }
+        try exec("BEGIN IMMEDIATE;")
+        var committed = false
+        defer { if !committed { try? exec("ROLLBACK;") } }
+        var stmt: OpaquePointer?
+        let sql = "INSERT INTO deletion_log (id, tier, reason, deleted_at) VALUES (?, ?, ?, ?);"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw CacheError.statementFailed(lastErrorMessage)
+        }
+        defer { sqlite3_finalize(stmt) }
+        for id in ids {
+            sqlite3_reset(stmt)
+            sqlite3_clear_bindings(stmt)
+            sqlite3_bind_text(stmt, 1, id, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_int(stmt, 2, Int32(tier.rawValue))
+            sqlite3_bind_text(stmt, 3, reason.rawValue, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_double(stmt, 4, date.timeIntervalSince1970)
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                throw CacheError.statementFailed(lastErrorMessage)
+            }
+        }
+        try exec("COMMIT;")
+        committed = true
+    }
+
+    struct DeletionLogEntry {
+        var id: String
+        var tier: Tier
+        var reason: TierReason
+        var deletedAt: Date
+    }
+
+    /// All deletion-log rows, newest first. Used by the undo hint and any
+    /// future "what did I delete" view.
+    func deletionLog() throws -> [DeletionLogEntry] {
+        var out: [DeletionLogEntry] = []
+        var stmt: OpaquePointer?
+        let sql = "SELECT id, tier, reason, deleted_at FROM deletion_log ORDER BY deleted_at DESC;"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw CacheError.statementFailed(lastErrorMessage)
+        }
+        defer { sqlite3_finalize(stmt) }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let idC = sqlite3_column_text(stmt, 0),
+                  let reasonC = sqlite3_column_text(stmt, 2) else { continue }
+            let tierRaw = Int(sqlite3_column_int(stmt, 1))
+            guard let tier = Tier(rawValue: tierRaw),
+                  let reason = TierReason(rawValue: String(cString: reasonC)) else { continue }
+            let date = Date(timeIntervalSince1970: sqlite3_column_double(stmt, 3))
+            out.append(DeletionLogEntry(id: String(cString: idC), tier: tier,
+                                        reason: reason, deletedAt: date))
+        }
+        return out
+    }
+
+    /// Removes rows for photos that were deleted, so they do not reappear as
+    /// stale entries on the next scan. The deletion log row is kept.
+    func removePhotoRows(ids: [String]) throws {
+        guard !ids.isEmpty else { return }
+        for chunk in ids.chunked(into: 400) {
+            let placeholders = chunk.map { _ in "?" }.joined(separator: ",")
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "DELETE FROM photo WHERE id IN (\(placeholders));",
+                                     -1, &stmt, nil) == SQLITE_OK else {
+                throw CacheError.statementFailed(lastErrorMessage)
+            }
+            defer { sqlite3_finalize(stmt) }
+            for (i, id) in chunk.enumerated() {
+                sqlite3_bind_text(stmt, Int32(i + 1), id, -1, SQLITE_TRANSIENT)
+            }
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                throw CacheError.statementFailed(lastErrorMessage)
+            }
+        }
     }
 
     /// Drops rows for assets no longer in the library.

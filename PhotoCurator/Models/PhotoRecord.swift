@@ -52,7 +52,7 @@ enum TierReason: String, Codable, CaseIterable, Sendable {
     }
 }
 
-enum Tier: Int, Codable, Comparable, Sendable {
+enum Tier: Int, Codable, Comparable, Hashable, Sendable {
     case tier1 = 1          // high-confidence junk
     case tier2 = 2          // likely unwanted
     case tier3Protected = 3 // never touched

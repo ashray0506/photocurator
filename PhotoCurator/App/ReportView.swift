@@ -59,33 +59,39 @@ struct ReportView: View {
     private var tierSection: some View {
         section("Tiers") {
             ForEach(report.tiers) { summary in
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text(summary.tier.displayName)
-                            .font(.headline)
-                        Spacer()
-                        Text(summary.count.formatted())
-                            .font(.headline.monospacedDigit())
-                        Text(summary.formattedSize)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    ForEach(summary.reasons, id: \.reason) { entry in
+                NavigationLink(value: summary.tier) {
+                    VStack(alignment: .leading, spacing: 6) {
                         HStack {
-                            Text(entry.reason.displayName)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
+                            Text(summary.tier.displayName)
+                                .font(.headline)
                             Spacer()
-                            Text(entry.count.formatted())
-                                .font(.callout.monospacedDigit())
+                            Text(summary.count.formatted())
+                                .font(.headline.monospacedDigit())
+                            Text(summary.formattedSize)
+                                .font(.caption)
                                 .foregroundStyle(.secondary)
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
                         }
-                        .padding(.leading, 14)
+                        ForEach(summary.reasons, id: \.reason) { entry in
+                            HStack {
+                                Text(entry.reason.displayName)
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Text(entry.count.formatted())
+                                    .font(.callout.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.leading, 14)
+                        }
                     }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
                 }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+                .buttonStyle(.plain)
             }
         }
     }
