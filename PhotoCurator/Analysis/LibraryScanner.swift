@@ -352,6 +352,32 @@ final class LibraryScanner: ObservableObject {
         try? cache?.saveTrip(trip)
     }
 
+    /// Saves every currently-detected candidate automatically, with a
+    /// best-guess name (geocoded place, or a date-range fallback when there
+    /// is no GPS) — so trips simply appear in the list rather than needing
+    /// an explicit tap-to-name-and-save per trip. Renaming afterward is the
+    /// same `renameTrip` used everywhere else; this is purely about not
+    /// requiring a gate before a trip exists at all.
+    @discardableResult
+    func autoSaveDetectedTrips(detector: TripDetector = TripDetector()) async -> [Trip] {
+        let candidates = detectTripCandidates(detector: detector)
+        var saved: [Trip] = []
+        for candidate in candidates {
+            let placeSegmentsByDay = await resolvePlaceNames(for: candidate.segmentsByDay)
+            let placeNames = placeSegmentsByDay.values.flatMap { $0 }.compactMap(\.placeName)
+            var seen = Set<String>()
+            let distinct = placeNames.filter { seen.insert($0).inserted }
+            let name = Trip.suggestedName(startDay: candidate.startDay, endDay: candidate.endDay,
+                                          placeNames: distinct)
+            let trip = Trip(name: name, startDay: candidate.startDay, endDay: candidate.endDay,
+                            photoIds: candidate.photoIds, placeSegmentsByDay: placeSegmentsByDay)
+            trips.insert(trip, at: 0)
+            try? cache?.saveTrip(trip)
+            saved.append(trip)
+        }
+        return saved
+    }
+
     /// Reverse-geocodes every segment's centroid and converts to the
     /// persisted, dictionary-keyed shape `Trip` stores. Exposed so the
     /// naming sheet can resolve once and hand the result to `saveTrip`.

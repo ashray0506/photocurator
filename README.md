@@ -74,11 +74,14 @@ visible afterward in the Trips tab like any other.
 
 ## Trips (the "build an album" feature)
 
-A second tab, **Trips**, alongside the scan/curate tab. Tap "Find Trips" to
-detect candidates from the survivor photos (anything not in Tier 1/2), name
-one (it suggests a real place name, resolved by reverse geocoding) and save
-it, then open a trip to see it grouped by day — each day labelled with its
-place segments — and export a PDF.
+A second tab, **Trips**, alongside the scan/curate tab. "Find Trips" detects
+candidates from the survivor photos (anything not in Tier 1/2) and **saves
+every one automatically** with a best-guess name (a real place, resolved by
+reverse geocoding, or a date-range fallback when there's no GPS) — trips
+just appear in the list; there is no gate requiring you to name one before
+it exists. Rename anytime (swipe, or right-click → Rename). Open a trip to
+see it grouped by day — each day labelled with its place segments — and
+export a PDF.
 
 **Trip detection uses GPS, per PRD §10's full design** (an earlier version
 of this feature used date gaps only, based on a stale scan report that

@@ -1,13 +1,13 @@
 import SwiftUI
 
-/// Trip list: saved trips plus candidates detected from day grouping, place
-/// segmentation and date gaps together (PRD §10, full design — see
-/// `TripDetector`). This is the screen that answers "build a photo album
-/// for my trips".
+/// Trip list: every detected trip is saved automatically with a
+/// best-guess name (geocoded place, or a date range when there's no GPS) —
+/// trips simply appear here rather than requiring an explicit tap-to-name
+/// step before they exist. Rename anytime by tapping a trip.
 struct TripsView: View {
     @EnvironmentObject private var scanner: LibraryScanner
-    @State private var candidates: [TripDetector.Candidate] = []
-    @State private var namingCandidate: TripDetector.Candidate?
+    @State private var isFindingTrips = false
+    @State private var renamingTrip: Trip?
 
     var body: some View {
         NavigationStack {
@@ -21,22 +21,38 @@ struct TripsView: View {
             .navigationTitle("Trips")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
-                    Button("Find Trips") { candidates = scanner.detectTripCandidates() }
-                        .disabled(scanner.records.isEmpty)
+                    Button {
+                        Task { await findTrips() }
+                    } label: {
+                        if isFindingTrips {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Text("Find Trips")
+                        }
+                    }
+                    .disabled(scanner.records.isEmpty || isFindingTrips)
                 }
             }
             .navigationDestination(for: Trip.self) { trip in
                 TripDetailView(trip: trip)
             }
-            .sheet(item: $namingCandidate) { candidate in
-                NameTripSheet(candidate: candidate, scanner: scanner) { name, candidate, resolved in
-                    scanner.saveTrip(name: name, candidate: candidate, placeSegmentsByDay: resolved)
-                    candidates.removeAll { $0.id == candidate.id }
-                    namingCandidate = nil
+            .sheet(item: $renamingTrip) { trip in
+                RenameTripSheet(trip: trip) { newName in
+                    scanner.renameTrip(id: trip.id, to: newName)
+                    renamingTrip = nil
                 }
             }
-            .task { if scanner.records.isEmpty == false { candidates = scanner.detectTripCandidates() } }
+            .task {
+                guard !scanner.records.isEmpty else { return }
+                await findTrips()
+            }
         }
+    }
+
+    private func findTrips() async {
+        isFindingTrips = true
+        defer { isFindingTrips = false }
+        await scanner.autoSaveDetectedTrips()
     }
 
     private var emptyState: some View {
@@ -62,33 +78,25 @@ struct TripsView: View {
                 Section("Your Trips") {
                     ForEach(scanner.trips) { trip in
                         NavigationLink(value: trip) {
-                            tripRow(name: trip.name, startDay: trip.startDay, endDay: trip.endDay,
-                                   photoCount: trip.photoIds.count)
+                            tripRow(trip)
                         }
                         .swipeActions {
+                            Button("Delete", role: .destructive) { scanner.deleteTrip(id: trip.id) }
+                            Button("Rename") { renamingTrip = trip }
+                                .tint(.blue)
+                        }
+                        .contextMenu {
+                            Button("Rename") { renamingTrip = trip }
                             Button("Delete", role: .destructive) { scanner.deleteTrip(id: trip.id) }
                         }
                     }
                 }
-            }
-
-            if !candidates.isEmpty {
-                Section("Detected (not yet saved)") {
-                    ForEach(candidates) { candidate in
-                        Button {
-                            namingCandidate = candidate
-                        } label: {
-                            tripRow(name: Trip.suggestedName(startDay: candidate.startDay, endDay: candidate.endDay),
-                                   startDay: candidate.startDay, endDay: candidate.endDay,
-                                   photoCount: candidate.photoIds.count,
-                                   hasLocation: candidate.hasAnyLocation)
-                        }
-                        .buttonStyle(.plain)
-                    }
+            } else if isFindingTrips {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Looking for trips…").foregroundStyle(.secondary)
                 }
-            }
-
-            if candidates.isEmpty && scanner.trips.isEmpty {
+            } else {
                 Text("No trips detected yet. Tap \"Find Trips\" above, or scan a larger library — trips need at least a few days with several photos each, separated by a quieter stretch or a change of location.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -96,21 +104,20 @@ struct TripsView: View {
         }
     }
 
-    private func tripRow(name: String, startDay: Date, endDay: Date,
-                         photoCount: Int, hasLocation: Bool = true) -> some View {
+    private func tripRow(_ trip: Trip) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(name).font(.headline)
-                Text(startDay, format: .dateTime.year().month().day())
+                Text(trip.name).font(.headline)
+                Text(trip.startDay, format: .dateTime.year().month().day())
                 + Text(" – ")
-                + Text(endDay, format: .dateTime.year().month().day())
+                + Text(trip.endDay, format: .dateTime.year().month().day())
             }
             .font(.callout)
             Spacer()
-            Text("\(photoCount.formatted()) photos")
+            Text("\(trip.photoIds.count.formatted()) photos")
                 .font(.callout.monospacedDigit())
                 .foregroundStyle(.secondary)
-            if !hasLocation {
+            if trip.distinctPlaceNames.isEmpty {
                 Image(systemName: "location.slash")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
@@ -119,60 +126,34 @@ struct TripsView: View {
     }
 }
 
-/// Resolves place names (PRD §10.3) as soon as the sheet opens, so the user
-/// sees a real suggested name — e.g. "Seoul, South Korea" — before deciding
-/// whether to keep it, rather than only after saving.
-private struct NameTripSheet: View {
-    let candidate: TripDetector.Candidate
-    let scanner: LibraryScanner
-    let onConfirm: (String, TripDetector.Candidate, [String: [TripPlaceSegment]]) -> Void
-
-    @State private var draftName: String = ""
-    @State private var isResolvingPlaces = true
-    @State private var resolvedSegments: [String: [TripPlaceSegment]] = [:]
+private struct RenameTripSheet: View {
+    let trip: Trip
+    let onConfirm: (String) -> Void
+    @State private var draftName: String
     @Environment(\.dismiss) private var dismiss
+
+    init(trip: Trip, onConfirm: @escaping (String) -> Void) {
+        self.trip = trip
+        self.onConfirm = onConfirm
+        self._draftName = State(initialValue: trip.name)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Name this trip").font(.title3.weight(.semibold))
-            Text("\(candidate.dayCount) days · \(candidate.photoIds.count.formatted()) photos")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-
-            if isResolvingPlaces {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Looking up places…").font(.caption).foregroundStyle(.secondary)
-                }
-            }
-
+            Text("Rename trip").font(.title3.weight(.semibold))
             TextField("Trip name", text: $draftName)
                 .textFieldStyle(.roundedBorder)
+                .onSubmit { onConfirm(draftName) }
 
             HStack {
                 Button("Cancel") { dismiss() }
                 Spacer()
-                Button("Save Trip") {
-                    onConfirm(draftName, candidate, resolvedSegments)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(draftName.trimmingCharacters(in: .whitespaces).isEmpty)
+                Button("Save") { onConfirm(draftName) }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(draftName.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
         .padding(24)
         .frame(width: 360)
-        .task {
-            draftName = Trip.suggestedName(startDay: candidate.startDay, endDay: candidate.endDay)
-            resolvedSegments = await scanner.resolvePlaceNames(for: candidate.segmentsByDay)
-            isResolvingPlaces = false
-
-            let placeNames = resolvedSegments.values.flatMap { $0 }.compactMap(\.placeName)
-            guard !placeNames.isEmpty else { return }
-            var seen = Set<String>()
-            let distinct = placeNames.filter { seen.insert($0).inserted }
-            draftName = Trip.suggestedName(startDay: candidate.startDay,
-                                           endDay: candidate.endDay,
-                                           placeNames: distinct)
-        }
     }
 }
