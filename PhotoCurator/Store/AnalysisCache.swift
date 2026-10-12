@@ -120,6 +120,19 @@ final class AnalysisCache: @unchecked Sendable {
 
     // MARK: Reads
 
+    /// Cheap existence check, for deciding whether a scan has ever
+    /// completed before (used to gate an automatic launch-time rescan for
+    /// Trip Wrap-Up — never auto-scan on a genuinely first launch, where
+    /// the backup-reminder and permission flow must run first).
+    func hasAnyPhotos() -> Bool {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT 1 FROM photo LIMIT 1;", -1, &stmt, nil) == SQLITE_OK else {
+            return false
+        }
+        defer { sqlite3_finalize(stmt) }
+        return sqlite3_step(stmt) == SQLITE_ROW
+    }
+
     /// Loads every cached record keyed by id. One pass, used at scan start.
     func loadAll() throws -> [String: PhotoRecord] {
         var out: [String: PhotoRecord] = [:]

@@ -437,3 +437,37 @@ final class HomeLocationDetectorTests: XCTestCase {
         XCTAssertEqual(candidates.count, 2)
     }
 }
+
+/// The "Trip Wrap-Up" selection logic: pick the latest-ending candidate
+/// trip within a recency window, so the launch-time banner offers the
+/// trip that just happened, not an older unsaved one sitting in the list.
+final class TripWrapUpSelectionTests: XCTestCase {
+
+    private func candidate(endDaysAgo: Int, photoCount: Int = 10) -> TripDetector.Candidate {
+        let end = Calendar.current.date(byAdding: .day, value: -endDaysAgo, to: Date())!
+        let start = Calendar.current.date(byAdding: .day, value: -2, to: end)!
+        return TripDetector.Candidate(startDay: start, endDay: end,
+                                      photoIds: (0..<photoCount).map { "p\($0)" },
+                                      hasAnyLocation: true)
+    }
+
+    func testPicksTheMostRecentlyEndedCandidate() {
+        let candidates = [candidate(endDaysAgo: 3), candidate(endDaysAgo: 1), candidate(endDaysAgo: 2)]
+        let picked = LibraryScanner.mostRecentCandidate(in: candidates, within: 4)
+        XCTAssertEqual(picked?.endDay, candidates[1].endDay)
+    }
+
+    func testExcludesCandidatesOutsideTheWindow() {
+        let candidates = [candidate(endDaysAgo: 10)]
+        XCTAssertNil(LibraryScanner.mostRecentCandidate(in: candidates, within: 4))
+    }
+
+    func testBoundaryEndDayAtExactlyTheWindowQualifies() {
+        let candidates = [candidate(endDaysAgo: 4)]
+        XCTAssertNotNil(LibraryScanner.mostRecentCandidate(in: candidates, within: 4))
+    }
+
+    func testEmptyCandidateListReturnsNil() {
+        XCTAssertNil(LibraryScanner.mostRecentCandidate(in: [], within: 4))
+    }
+}

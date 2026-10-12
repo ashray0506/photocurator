@@ -48,6 +48,30 @@ Tapping a tier in the report opens its review screen (PRD §6):
   `PHAssetChangeRequest.deleteAssets` calls, with progress shown for large
   batches. macOS shows its own system confirmation on top of this app's.
 
+## Trip Wrap-Up (the "just got back" moment)
+
+Not in the original PRD — added because a pull-based flow (open the app,
+run a scan, go find your trip) misses the moment that actually matters:
+right after a trip ends, before the photos pile into the general backlog.
+This mirrors Apple Photos' Memories and Google Photos' trip highlights,
+which surface this on their own rather than waiting to be asked.
+
+On launch, **if a scan has completed at least once before** (never on a
+genuinely first launch — Photos access and the backup reminder must run
+first), the app kicks off a light incremental rescan. Because the cache
+only re-analyses photos added since the last scan, this stays fast even on
+a library that's been scanned before. If that rescan turns up a trip
+candidate (via the same home-aware `TripDetector` the Trips tab uses) that
+ended within the last few days and isn't already saved, a banner appears:
+**"Trip Wrap-Up ready: Seoul, Oct 4–11 (441 photos)."**
+
+Tapping it opens a single combined sheet — not three separate screens —
+since the volume here is a few hundred photos, not the whole library:
+name the trip (place-based, same geocoding as the Trips tab), clear the
+trip's own junk/duplicates with one button, and see which photos make the
+book draft, all in one sitting. Saving persists it as an ordinary `Trip`,
+visible afterward in the Trips tab like any other.
+
 ## Trips (the "build an album" feature)
 
 A second tab, **Trips**, alongside the scan/curate tab. Tap "Find Trips" to

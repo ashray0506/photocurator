@@ -23,16 +23,55 @@ struct PhotoCuratorApp: App {
     }
 }
 
-/// Top-level tabs: the scan/curate workflow and the trip-book workflow are
-/// separate concerns sharing one scanner, so each gets its own tab rather
-/// than being squeezed into one screen.
+/// Top-level tabs, with the Trip Wrap-Up banner surfaced above them —
+/// the proactive "you just got back, want to clean this up?" moment
+/// (PRD-adjacent product requirement, not in the original spec: Apple
+/// Photos' Memories and Google Photos' trip highlights do this on their
+/// own, without the user having to go looking for a review screen).
 private struct RootView: View {
+    @EnvironmentObject private var scanner: LibraryScanner
+    @State private var wrapUpCandidate: TripDetector.Candidate?
+    @State private var dismissedCandidateID: String?
+    @State private var showingWrapUp = false
+
     var body: some View {
-        TabView {
-            ScanView()
-                .tabItem { Label("Curate", systemImage: "checkmark.circle") }
-            TripsView()
-                .tabItem { Label("Trips", systemImage: "airplane") }
+        VStack(spacing: 0) {
+            if let candidate = wrapUpCandidate, candidate.id != dismissedCandidateID {
+                TripWrapUpBanner(candidate: candidate,
+                                 onOpen: { showingWrapUp = true },
+                                 onDismiss: { dismissedCandidateID = candidate.id })
+            }
+
+            TabView {
+                ScanView()
+                    .tabItem { Label("Curate", systemImage: "checkmark.circle") }
+                TripsView()
+                    .tabItem { Label("Trips", systemImage: "airplane") }
+            }
+        }
+        .sheet(isPresented: $showingWrapUp) {
+            if let candidate = wrapUpCandidate {
+                TripWrapUpView(candidate: candidate) {
+                    showingWrapUp = false
+                    wrapUpCandidate = nil
+                }
+            }
+        }
+        .task {
+            // A light incremental scan on launch, so a just-finished
+            // trip's photos are picked up without the user remembering to
+            // press "Rescan". Gated on having scanned at least once before:
+            // a genuinely first launch must go through Photos access and
+            // the backup reminder first, not an automatic background scan.
+            // Once past that, the cache (PRD §13) keeps this cheap — only
+            // photos added since the last scan are actually analysed.
+            if scanner.hasScannedBefore {
+                scanner.start()
+            }
+        }
+        .onReceive(scanner.$phase) { phase in
+            guard phase == .finished else { return }
+            wrapUpCandidate = scanner.recentUnsavedTripCandidate()
         }
     }
 }

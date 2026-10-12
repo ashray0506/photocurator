@@ -144,7 +144,18 @@ final class LibraryScanner: ObservableObject {
         guard tier != .tier3Protected else { return }
         let targets = photos(in: tier)
         guard !targets.isEmpty else { return }
+        try await deletePhotos(targets, progress: progress)
+    }
 
+    /// Deletes an arbitrary set of non-protected records — used by tier
+    /// deletion (a whole tier) and by Trip Wrap-Up (a trip's junk subset).
+    /// Always routes through here so `records` and the report stay in sync
+    /// with what PhotoKit actually deleted; a caller that bypassed this
+    /// would leave the deleted photos still showing in the UI until the
+    /// next full scan.
+    func deletePhotos(_ targets: [PhotoRecord],
+                      progress: (@Sendable (Int, Int) -> Void)? = nil) async throws {
+        guard !targets.isEmpty else { return }
         try await deletionService.delete(targets, cache: cache, progress: progress)
 
         let deletedIds = Set(targets.map(\.id))
@@ -246,6 +257,14 @@ final class LibraryScanner: ObservableObject {
         trips = (try? cache?.loadTrips()) ?? []
     }
 
+    /// Whether a scan has ever completed before. Used to gate an automatic
+    /// launch-time rescan (Trip Wrap-Up detection): never auto-scan on a
+    /// genuinely first launch, where Photos access and the backup reminder
+    /// must be granted/acknowledged first.
+    var hasScannedBefore: Bool {
+        cache?.hasAnyPhotos() ?? false
+    }
+
     /// Runs `TripDetector` over the current survivors and returns candidates
     /// that do not already overlap a saved trip's date range, so re-running
     /// detection after naming some trips does not re-offer the same range.
@@ -262,6 +281,41 @@ final class LibraryScanner: ObservableObject {
                 trip.startDay <= candidate.endDay && candidate.startDay <= trip.endDay
             }
         }
+    }
+
+    /// The "Trip Wrap-Up" moment: a trip that just ended, not yet saved, so
+    /// the app can proactively offer to clean it up and draft its book
+    /// while the trip is still fresh — the same pattern as Apple Photos'
+    /// Memories or Google Photos' trip highlights.
+    ///
+    /// Requires `records` to already reflect the trip's photos, which means
+    /// a scan must have run since returning — there is no detection without
+    /// at least an incremental scan, since that is what populates `records`
+    /// in the first place. The app's own incremental cache (PRD §13) keeps
+    /// this cheap: a scan run days after the last one only analyses the
+    /// handful of new photos, not the whole library again.
+    func recentUnsavedTripCandidate(within days: Int = 4,
+                                    detector: TripDetector = TripDetector()) -> TripDetector.Candidate? {
+        Self.mostRecentCandidate(in: detectTripCandidates(detector: detector), within: days)
+    }
+
+    /// The selection logic alone, factored out so it is testable without a
+    /// live Photos library or `@MainActor` scanner state: picks the
+    /// latest-ending candidate that ended within the last `days` days, or
+    /// nil if none qualifies.
+    nonisolated static func mostRecentCandidate(in candidates: [TripDetector.Candidate],
+                                                within days: Int, now: Date = Date()) -> TripDetector.Candidate? {
+        // Compare at day granularity: `endDay` is always a start-of-day
+        // timestamp (PhotoRecord.dayStart), but `now` carries a time of
+        // day, so subtracting `days` from `now` directly can land a few
+        // hours after a candidate's start-of-day cutoff and wrongly
+        // exclude it. Truncating `now` to its own start-of-day first keeps
+        // the comparison exact at exactly `days` days back.
+        let calendar = Calendar.current
+        let cutoff = calendar.date(byAdding: .day, value: -days, to: calendar.startOfDay(for: now)) ?? .distantPast
+        return candidates
+            .filter { $0.endDay >= cutoff }
+            .max { $0.endDay < $1.endDay }
     }
 
     /// Confirms a candidate as a named trip and persists it. The caller
