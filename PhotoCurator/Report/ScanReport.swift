@@ -58,6 +58,15 @@ struct ScanReport {
         tiers.first { $0.tier == .tier3Protected }?.count ?? 0
     }
 
+    /// Overall GPS coverage across *every* day, not just the ones shown in
+    /// a truncated list. A UI that only displays the first N of `days`
+    /// (oldest-first) can make a library look GPS-less when really only
+    /// its earliest, sparsest-metadata years lack location — this number
+    /// stays accurate regardless of how the day list itself is truncated
+    /// or sorted for display.
+    var daysWithLocation: Int { days.count(where: \.hasLocation) }
+    var daysTotal: Int { days.count }
+
     var formattedDuration: String {
         let seconds = Double(duration.components.seconds)
             + Double(duration.components.attoseconds) / 1e18
@@ -199,7 +208,7 @@ struct ScanReport {
         lines.append(String(format: "  Special-landscape aesthetics: %.3f", specialLandscapeThreshold))
         lines.append("")
 
-        lines.append("DAYS (\(days.count.formatted()))")
+        lines.append("DAYS (\(days.count.formatted())) — \(daysWithLocation.formatted()) with GPS (\(daysTotal > 0 ? Int(100.0 * Double(daysWithLocation) / Double(daysTotal)) : 0)%)")
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
         for day in days {

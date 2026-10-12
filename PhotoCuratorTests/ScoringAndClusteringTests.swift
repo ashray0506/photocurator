@@ -231,6 +231,38 @@ final class ScanReportTests: XCTestCase {
         XCTAssertEqual(report.tiers.first { $0.tier == .tier1 }?.reasons.first?.reason, .screenshot)
     }
 
+    /// Regression: `daysWithLocation`/`daysTotal` must reflect every day in
+    /// the library, not just whatever a truncated UI list happens to show.
+    /// A real bug: ReportView showed the oldest 60 days first, and in a
+    /// decades-spanning library those are often the least GPS-tagged, which
+    /// made a well-covered library look GPS-less at a glance. The overall
+    /// stat must stay correct regardless of how any view slices `days`.
+    func testDaysWithLocationCountsEveryDayNotJustAVisibleSlice() {
+        var records: [PhotoRecord] = []
+        let calendar = Calendar.current
+        // Three old days, no GPS.
+        for offset in 0..<3 {
+            var record = PhotoRecord(id: "old-\(offset)")
+            record.creationDate = calendar.date(byAdding: .year, value: -40 + offset, to: Date())
+            records.append(record)
+        }
+        // Two recent days, with GPS.
+        for offset in 0..<2 {
+            var record = PhotoRecord(id: "recent-\(offset)")
+            record.creationDate = calendar.date(byAdding: .day, value: -offset, to: Date())
+            record.latitude = 37.5
+            record.longitude = 127.0
+            records.append(record)
+        }
+
+        let report = ScanReport(records: records, faceClusters: [], clusters: [],
+                                outfitSplitsByDay: [:], specialLandscapeThreshold: 0.8,
+                                duration: .seconds(1), fromCache: 0)
+
+        XCTAssertEqual(report.daysTotal, 5)
+        XCTAssertEqual(report.daysWithLocation, 2)
+    }
+
     /// PRD §12, M1: the report must state how many extra clusters outfit
     /// splitting created, per day.
     func testReportSurfacesOutfitSplits() {

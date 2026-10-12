@@ -125,7 +125,22 @@ struct ReportView: View {
 
     private var daysSection: some View {
         section("Days") {
-            ForEach(report.days.prefix(60)) { day in
+            HStack {
+                Text("GPS coverage").foregroundStyle(.secondary)
+                Spacer()
+                Text(gpsCoverageText)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+            .font(.callout)
+
+            // Most recent first: the oldest days in a long-running library
+            // are often the ones with the least metadata (no GPS on old
+            // photos, in particular), so showing oldest-first in a
+            // truncated list made the whole library look GPS-less even
+            // when recent years are well covered. The overall stat above
+            // is the number to trust either way.
+            ForEach(report.days.sorted { $0.day > $1.day }.prefix(60)) { day in
                 HStack {
                     Text(day.day, format: .dateTime.year().month().day())
                         .font(.callout.monospacedDigit())
@@ -155,6 +170,13 @@ struct ReportView: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private var gpsCoverageText: String {
+        let total = report.daysTotal
+        guard total > 0 else { return "0 of 0 days" }
+        let percent = Int(100.0 * Double(report.daysWithLocation) / Double(total))
+        return "\(report.daysWithLocation.formatted()) of \(total.formatted()) days (\(percent)%)"
     }
 
     private func row(_ label: String, _ value: Int) -> some View {
