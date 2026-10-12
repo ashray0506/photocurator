@@ -471,3 +471,53 @@ final class TripWrapUpSelectionTests: XCTestCase {
         XCTAssertNil(LibraryScanner.mostRecentCandidate(in: [], within: 4))
     }
 }
+
+/// The book's per-day photo selection and swap logic (PRD §10.4, §10.8),
+/// factored out of LibraryScanner as pure functions for testability.
+final class BookDaySelectionTests: XCTestCase {
+
+    private func record(_ id: String, aesthetics: Double = 0.5) -> PhotoRecord {
+        var record = PhotoRecord(id: id)
+        record.quality.aesthetics = aesthetics
+        record.quality.sharpness = 0.5
+        record.quality.brightness = 0.45
+        return record
+    }
+
+    func testSelectsTopMaxWhenMoreThanMaxAvailable() {
+        var settings = CuratorSettings.default
+        settings.bookPhotosPerDayMin = 3
+        settings.bookPhotosPerDayMax = 6
+        let scorer = BestPhotoScorer(settings: settings, knownClusterIds: [])
+
+        let photos = (0..<10).map { record("p\($0)", aesthetics: Double($0) / 10) }
+        let chosen = LibraryScanner.rankAndSelect(photos, scorer: scorer, settings: settings)
+
+        XCTAssertEqual(chosen.count, 6)
+        XCTAssertEqual(chosen.first?.id, "p9", "the highest-scoring photo should rank first")
+    }
+
+    func testSelectsAllWhenFewerThanMinAvailable() {
+        let settings = CuratorSettings.default
+        let scorer = BestPhotoScorer(settings: settings, knownClusterIds: [])
+        let photos = (0..<2).map { record("p\($0)") }
+
+        let chosen = LibraryScanner.rankAndSelect(photos, scorer: scorer, settings: settings)
+        XCTAssertEqual(chosen.count, 2, "cannot select more than exist, even below the minimum")
+    }
+
+    func testEmptyDayProducesEmptySelection() {
+        let settings = CuratorSettings.default
+        let scorer = BestPhotoScorer(settings: settings, knownClusterIds: [])
+        XCTAssertTrue(LibraryScanner.rankAndSelect([], scorer: scorer, settings: settings).isEmpty)
+    }
+
+    func testSwapReplacesOutgoingAtItsPosition() {
+        let result = LibraryScanner.swapped(in: ["a", "b", "c"], outgoing: "b", incoming: "x")
+        XCTAssertEqual(result, ["a", "x", "c"])
+    }
+
+    func testSwapOfIdNotInSelectionReturnsNil() {
+        XCTAssertNil(LibraryScanner.swapped(in: ["a", "b", "c"], outgoing: "z", incoming: "x"))
+    }
+}

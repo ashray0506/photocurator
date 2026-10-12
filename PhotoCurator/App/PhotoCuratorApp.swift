@@ -3,11 +3,13 @@ import SwiftUI
 @main
 struct PhotoCuratorApp: App {
     @StateObject private var scanner = LibraryScanner()
+    @StateObject private var toasts = ToastCenter()
 
     var body: some Scene {
         WindowGroup("PhotoCurator") {
             RootView()
                 .environmentObject(scanner)
+                .environmentObject(toasts)
                 .frame(minWidth: 820, minHeight: 600)
                 .task {
                     scanner.loadTrips()
@@ -30,6 +32,7 @@ struct PhotoCuratorApp: App {
 /// own, without the user having to go looking for a review screen).
 private struct RootView: View {
     @EnvironmentObject private var scanner: LibraryScanner
+    @EnvironmentObject private var toasts: ToastCenter
     @State private var wrapUpCandidate: TripDetector.Candidate?
     @State private var dismissedCandidateID: String?
     @State private var showingWrapUp = false
@@ -49,6 +52,7 @@ private struct RootView: View {
                     .tabItem { Label("Trips", systemImage: "airplane") }
             }
         }
+        .overlay { ToastOverlay(center: toasts) }
         .sheet(isPresented: $showingWrapUp) {
             if let candidate = wrapUpCandidate {
                 TripWrapUpView(candidate: candidate) {

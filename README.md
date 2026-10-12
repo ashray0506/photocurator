@@ -118,12 +118,18 @@ and one page per day with a place-name subtitle and a simple photo grid.
   sending trip text to the Anthropic API (§14), not just engineering work.
 - No MapKit route map per day (§10.6) — now that place data is wired up,
   this is a reasonable next step.
-- No "swap photo for another in the cluster" or inline caption editing (§10.8).
+- Inline caption editing (§10.8's other half — swap is now done, see below).
 - Fixed page size/layout rather than the PRD's A4/8x10/square + bleed choice
   (§14 open question).
-- Best-3-to-6-per-day selection (§10.4) isn't applied — the exporter takes
-  the first 6 chronologically rather than ranking by quality, since
-  `BestPhotoScorer` ranks *within a cluster*, not across a whole day.
+
+**Now implemented**: best 3-to-6-per-day selection (§10.4) and swap (§10.8).
+Each day's chosen photos are ranked by `BestPhotoScorer.finalScore` across
+the *whole day* (not per-cluster, since a day usually spans several
+clusters), computed once and persisted on the `Trip`. The trip detail
+screen shows the chosen photos plus a "N more from this day" disclosure for
+the rest; tapping the swap icon on a chosen photo opens a picker over the
+day's alternates. The exported PDF uses the same selection, so what you see
+in the editor is what prints.
 
 ## Layout
 

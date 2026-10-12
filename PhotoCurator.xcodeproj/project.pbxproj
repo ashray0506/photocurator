@@ -40,6 +40,7 @@
 		339576983CEB5C44B72422D7 /* HomeLocationDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 052379944A2855258BCCDB6E /* HomeLocationDetector.swift */; };
 		118783CCB220510A9BDFD13B /* TripWrapUpBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5820CE9659225041AC020C5D /* TripWrapUpBanner.swift */; };
 		D30C78E5E1F651038625E47A /* TripWrapUpView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D2F8A972C5050C6B149A692 /* TripWrapUpView.swift */; };
+		4C45BBEAD49353059B652B37 /* ToastCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0B64C262CC559A28DCE078B /* ToastCenter.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -82,6 +83,7 @@
 		052379944A2855258BCCDB6E /* HomeLocationDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeLocationDetector.swift; sourceTree = "<group>"; };
 		5820CE9659225041AC020C5D /* TripWrapUpBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripWrapUpBanner.swift; sourceTree = "<group>"; };
 		3D2F8A972C5050C6B149A692 /* TripWrapUpView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripWrapUpView.swift; sourceTree = "<group>"; };
+		B0B64C262CC559A28DCE078B /* ToastCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToastCenter.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -138,6 +140,7 @@
 		ED34743005925A0FA7F00246 /* App */ = {
 			isa = PBXGroup;
 			children = (
+				B0B64C262CC559A28DCE078B /* ToastCenter.swift */,
 				3D2F8A972C5050C6B149A692 /* TripWrapUpView.swift */,
 				5820CE9659225041AC020C5D /* TripWrapUpBanner.swift */,
 				98DCD10A478D53C7BB5D16B6 /* TripDetailView.swift */,
@@ -306,6 +309,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4C45BBEAD49353059B652B37 /* ToastCenter.swift in Sources */,
 				D30C78E5E1F651038625E47A /* TripWrapUpView.swift in Sources */,
 				118783CCB220510A9BDFD13B /* TripWrapUpBanner.swift in Sources */,
 				339576983CEB5C44B72422D7 /* HomeLocationDetector.swift in Sources */,

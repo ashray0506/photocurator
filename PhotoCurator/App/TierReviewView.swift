@@ -10,6 +10,7 @@ import Photos
 struct TierReviewView: View {
     let tier: Tier
     @EnvironmentObject private var scanner: LibraryScanner
+    @EnvironmentObject private var toasts: ToastCenter
     @StateObject private var thumbnails = ThumbnailLoader()
 
     @State private var sample: [PhotoRecord] = []
@@ -40,6 +41,7 @@ struct TierReviewView: View {
         .task(id: tier) { loadSample() }
         .sheet(item: $enlarged) { record in
             EnlargedPhotoSheet(record: record,
+                              keeper: keeperCounterpart(for: record),
                               onRescue: { rescue(record) },
                               onDismiss: { enlarged = nil })
         }
@@ -166,6 +168,18 @@ struct TierReviewView: View {
         }
     }
 
+    /// The surviving "best of cluster" photo this record was flagged
+    /// against, if any — for the side-by-side "why was this one kept and
+    /// this one flagged" comparison (near-duplicate / duplicate reasons
+    /// only; a reason like "screenshot" has no counterpart to compare to).
+    private func keeperCounterpart(for record: PhotoRecord) -> PhotoRecord? {
+        guard record.reason == .nearDuplicate || record.reason == .exactDuplicate,
+              let clusterId = record.clusterId else { return nil }
+        return scanner.records.first {
+            $0.clusterId == clusterId && $0.id != record.id && $0.tier == .tier3Protected
+        }
+    }
+
     private func requestThumbnail(_ record: PhotoRecord) {
         let result = PHAsset.fetchAssets(withLocalIdentifiers: [record.id], options: nil)
         guard let asset = result.firstObject else { return }
@@ -199,19 +213,33 @@ struct TierReviewView: View {
     }
 
     private func rescue(_ record: PhotoRecord) {
-        scanner.rescue(record.id)
+        guard let before = scanner.rescue(record.id) else { return }
         sample.removeAll { $0.id == record.id }
         enlarged = nil
+        toasts.show("Rescued to Tier 3.", actionLabel: "Undo") {
+            scanner.undoRescue(before)
+        }
     }
 
     private func performDelete() async {
         isDeleting = true
+        let count = photos.count
         defer { isDeleting = false; deleteProgress = nil }
         do {
             try await scanner.deleteAll(in: tier) { done, total in
                 Task { @MainActor in deleteProgress = (done, total) }
             }
             sample.removeAll()
+            // Honest framing: this is not an undoable action from the app's
+            // side — PhotoKit has already moved these to Recently Deleted,
+            // and there is no API call this app can make to bring them
+            // back. The toast opens Photos.app (there is no public URL
+            // scheme for the Recently Deleted album specifically) rather
+            // than claiming to undo anything.
+            toasts.show("Deleted \(count.formatted()) photos. They're in Recently Deleted for 30 days.",
+                       actionLabel: "Open Photos", isAffirmative: true) {
+                NSWorkspace.shared.open(URL(string: "photos://")!)
+            }
         } catch {
             deleteError = error.localizedDescription
         }
@@ -219,38 +247,26 @@ struct TierReviewView: View {
 }
 
 /// Enlarged single-photo view with the rescue action (PRD §6: "tap to
-/// enlarge, tap to rescue").
+/// enlarge, tap to rescue"). When the flagged photo is a near/exact
+/// duplicate, shows it side-by-side with the surviving "keeper" from the
+/// same cluster, each with its own reasoning — so "why was this one kept
+/// and this one flagged" is visible at a glance rather than taken on faith.
 private struct EnlargedPhotoSheet: View {
     let record: PhotoRecord
+    let keeper: PhotoRecord?
     let onRescue: () -> Void
     let onDismiss: () -> Void
-    @StateObject private var thumbnails = ThumbnailLoader()
 
     var body: some View {
         VStack(spacing: 16) {
-            Group {
-                if let image = thumbnails.images[record.id] {
-                    image.resizable().aspectRatio(contentMode: .fit)
-                } else {
-                    Rectangle().fill(.quaternary)
+            if let keeper {
+                HStack(spacing: 16) {
+                    comparisonPane(record, title: "Flagged", tint: .red)
+                    comparisonPane(keeper, title: "Kept instead", tint: .green)
                 }
+            } else {
+                singlePane(record)
             }
-            .frame(minWidth: 400, minHeight: 300)
-            .task {
-                let result = PHAsset.fetchAssets(withLocalIdentifiers: [record.id], options: nil)
-                if let asset = result.firstObject {
-                    thumbnails.load(asset, targetSize: CGSize(width: 1000, height: 1000))
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(record.reason.displayName).font(.headline)
-                if let date = record.creationDate {
-                    Text(date, format: .dateTime.year().month().day().hour().minute())
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
 
             HStack {
                 Button("Close", action: onDismiss)
@@ -262,6 +278,79 @@ private struct EnlargedPhotoSheet: View {
             }
         }
         .padding(24)
-        .frame(width: 480)
+        .frame(width: keeper != nil ? 760 : 480)
+    }
+
+    private func comparisonPane(_ photo: PhotoRecord, title: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(title, systemImage: tint == .green ? "checkmark.circle.fill" : "xmark.circle.fill")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(tint)
+            PhotoThumbnailPane(record: photo, targetSize: CGSize(width: 700, height: 700))
+                .frame(minWidth: 320, minHeight: 240)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(reasonText(for: photo)).font(.callout.weight(.medium))
+                if let date = photo.creationDate {
+                    Text(date, format: .dateTime.hour().minute())
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func singlePane(_ photo: PhotoRecord) -> some View {
+        VStack(spacing: 12) {
+            PhotoThumbnailPane(record: photo, targetSize: CGSize(width: 1000, height: 1000))
+                .frame(minWidth: 400, minHeight: 300)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(photo.reason.displayName).font(.headline)
+                if let date = photo.creationDate {
+                    Text(date, format: .dateTime.year().month().day().hour().minute())
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// A one-line rationale, built from stored signals — matches the PRD's
+    /// "AI picked this because…" requirement without sending any image
+    /// content anywhere; every number here was already computed during the
+    /// scan (PRD §8: "Reasons are generated from stored signals and scores,
+    /// not from sending images to a model").
+    private func reasonText(for photo: PhotoRecord) -> String {
+        if photo.tier == .tier3Protected {
+            var parts: [String] = ["Sharper"]
+            if (photo.quality.aesthetics ?? 0) > 0.5 { parts.append("better composed") }
+            if !photo.faceClusterIds.isEmpty { parts.append("known person in frame") }
+            return parts.joined(separator: ", ")
+        }
+        return photo.reason.displayName
+    }
+}
+
+/// Loads and displays one photo's thumbnail at a given size — factored out
+/// of `EnlargedPhotoSheet` since the comparison view needs two independent
+/// loaders side by side.
+private struct PhotoThumbnailPane: View {
+    let record: PhotoRecord
+    let targetSize: CGSize
+    @StateObject private var thumbnails = ThumbnailLoader()
+
+    var body: some View {
+        Group {
+            if let image = thumbnails.images[record.id] {
+                image.resizable().aspectRatio(contentMode: .fit)
+            } else {
+                Rectangle().fill(.quaternary)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .task {
+            let result = PHAsset.fetchAssets(withLocalIdentifiers: [record.id], options: nil)
+            if let asset = result.firstObject {
+                thumbnails.load(asset, targetSize: targetSize)
+            }
+        }
     }
 }

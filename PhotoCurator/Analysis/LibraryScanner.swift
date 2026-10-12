@@ -113,12 +113,33 @@ final class LibraryScanner: ObservableObject {
     /// Rescues one photo into Tier 3 for this photo only (PRD §6: "tap to
     /// rescue an individual photo"). Persisted immediately so the rescue
     /// survives a rescan even if the user quits before scanning again.
-    func rescue(_ id: String) {
-        guard let index = records.firstIndex(where: { $0.id == id }) else { return }
+    /// Rescues a photo into Tier 3, returning the snapshot needed to undo
+    /// it — the only kind of undo this app can make fully real. A delete
+    /// has no equivalent: once `PhotoDeletionService` runs,
+    /// `PHAssetChangeRequest.deleteAssets` has already moved the asset to
+    /// Recently Deleted, and there is no PhotoKit call this app can make to
+    /// bring it back — only the user, in Photos.app, can restore it. The
+    /// toast for a delete must therefore point at Recently Deleted, never
+    /// claim to undo the delete itself.
+    @discardableResult
+    func rescue(_ id: String) -> PhotoRecord? {
+        guard let index = records.firstIndex(where: { $0.id == id }) else { return nil }
+        let before = records[index]
         records[index].userOverride = true
         records[index].tier = .tier3Protected
         records[index].reason = .favorite
         try? cache?.save([records[index]])
+        rebuildReport()
+        return before
+    }
+
+    /// Reverts a rescue to its pre-rescue tier/reason — real undo, not a
+    /// re-run of tier assignment (which could reclassify it differently if
+    /// settings changed since).
+    func undoRescue(_ previous: PhotoRecord) {
+        guard let index = records.firstIndex(where: { $0.id == previous.id }) else { return }
+        records[index] = previous
+        try? cache?.save([previous])
         rebuildReport()
     }
 
@@ -390,6 +411,71 @@ final class LibraryScanner: ObservableObject {
         return trip.photoIds
             .compactMap { byId[$0] }
             .sorted { ($0.creationDate ?? .distantPast) < ($1.creationDate ?? .distantPast) }
+    }
+
+    // MARK: Book photo selection (PRD §10.4)
+
+    /// The book's chosen photos for one day, computing and persisting a
+    /// default selection the first time this day is seen. Ranks the whole
+    /// day by `BestPhotoScorer.finalScore` (not per-cluster — a day may
+    /// span several clusters) and keeps the top `bookPhotosPerDayMax`,
+    /// never fewer than `bookPhotosPerDayMin` when that many photos exist.
+    func selectedPhotos(for day: Date, in trip: Trip, dayPhotos: [PhotoRecord]) -> [PhotoRecord] {
+        let key = Trip.dayKey(day)
+        if let existingIds = trip.selectedPhotoIdsByDay[key], !existingIds.isEmpty {
+            let byId = Dictionary(uniqueKeysWithValues: dayPhotos.map { ($0.id, $0) })
+            let ordered = existingIds.compactMap { byId[$0] }
+            if !ordered.isEmpty { return ordered }
+        }
+
+        let knownIds = Set(dayPhotos.flatMap(\.faceClusterIds))
+        let scorer = BestPhotoScorer(settings: settings, knownClusterIds: knownIds)
+        let chosen = Self.rankAndSelect(dayPhotos, scorer: scorer, settings: settings)
+
+        persistSelection(chosen.map(\.id), for: day, in: trip)
+        return chosen
+    }
+
+    /// The ranking/selection decision alone (PRD §10.4: best 3 to 6 per
+    /// day), factored out so it is testable without a live scanner or
+    /// Photos library. Ranks the whole day by `scorer.finalScore` (not
+    /// per-cluster — a day may span several clusters) and keeps the top
+    /// `bookPhotosPerDayMax`, never fewer than `bookPhotosPerDayMin` when
+    /// that many photos exist.
+    nonisolated static func rankAndSelect(_ dayPhotos: [PhotoRecord], scorer: BestPhotoScorer,
+                                          settings: CuratorSettings) -> [PhotoRecord] {
+        guard !dayPhotos.isEmpty else { return [] }
+        let target = min(settings.bookPhotosPerDayMax, max(settings.bookPhotosPerDayMin, dayPhotos.count))
+        let ranked = dayPhotos.sorted { scorer.finalScore($0) > scorer.finalScore($1) }
+        return Array(ranked.prefix(min(target, ranked.count)))
+    }
+
+    /// Swaps one chosen photo for another from the same day — the PRD
+    /// §10.8 "swap any chosen photo for another" affordance. The incoming
+    /// photo need not already be in the day's selection; it is simply
+    /// substituted at the outgoing photo's position.
+    func swapPhoto(_ outgoingId: String, for incomingId: String, day: Date, in trip: Trip) {
+        let key = Trip.dayKey(day)
+        guard let swapped = Self.swapped(in: trip.selectedPhotoIdsByDay[key] ?? [],
+                                         outgoing: outgoingId, incoming: incomingId) else { return }
+        persistSelection(swapped, for: day, in: trip)
+    }
+
+    /// The substitution alone, factored out for the same testability
+    /// reason as `rankAndSelect`. Nil when the outgoing id is not actually
+    /// in the current selection — a stale swap request should do nothing,
+    /// not insert the incoming photo at an arbitrary position.
+    nonisolated static func swapped(in ids: [String], outgoing: String, incoming: String) -> [String]? {
+        guard let index = ids.firstIndex(of: outgoing) else { return nil }
+        var result = ids
+        result[index] = incoming
+        return result
+    }
+
+    private func persistSelection(_ ids: [String], for day: Date, in trip: Trip) {
+        guard let index = trips.firstIndex(where: { $0.id == trip.id }) else { return }
+        trips[index].selectedPhotoIdsByDay[Trip.dayKey(day)] = ids
+        try? cache?.saveTrip(trips[index])
     }
 
     // MARK: Pipeline

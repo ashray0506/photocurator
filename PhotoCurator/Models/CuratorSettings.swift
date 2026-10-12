@@ -58,6 +58,13 @@ struct CuratorSettings: Codable, Equatable, Sendable {
     /// get mistaken for home just because it generated many photos.
     var homeMinDistinctDays = 30
 
+    // MARK: Book photo selection (PRD §10.4)
+
+    /// Minimum and maximum photos chosen per day for the book, ranked by
+    /// `BestPhotoScorer.finalScore` across the whole day (not per cluster).
+    var bookPhotosPerDayMin = 3
+    var bookPhotosPerDayMax = 6
+
     // MARK: Clustering (PRD §7)
 
     /// Primary signal: photos more than this far apart in time never cluster.

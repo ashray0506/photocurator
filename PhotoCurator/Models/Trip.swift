@@ -35,10 +35,17 @@ struct Trip: Codable, Identifiable, Sendable, Hashable {
     /// across all encoders) — populated once, lazily, the first time a trip
     /// is opened and geocoding completes.
     var placeSegmentsByDay: [String: [TripPlaceSegment]] = [:]
+    /// The book's chosen photos per day (PRD §10.4: best 3 to 6 per day),
+    /// same key shape as `placeSegmentsByDay`. Populated lazily the first
+    /// time a trip's book is opened (`LibraryScanner.selectedPhotos(for:)`);
+    /// empty until then, which callers read as "not yet chosen, show every
+    /// survivor for this day" rather than "deliberately empty day".
+    var selectedPhotoIdsByDay: [String: [String]] = [:]
     var createdAt: Date
 
     init(id: String = UUID().uuidString, name: String, startDay: Date, endDay: Date,
         photoIds: [String], placeSegmentsByDay: [String: [TripPlaceSegment]] = [:],
+        selectedPhotoIdsByDay: [String: [String]] = [:],
         createdAt: Date = Date()) {
         self.id = id
         self.name = name
@@ -46,6 +53,7 @@ struct Trip: Codable, Identifiable, Sendable, Hashable {
         self.endDay = endDay
         self.photoIds = photoIds
         self.placeSegmentsByDay = placeSegmentsByDay
+        self.selectedPhotoIdsByDay = selectedPhotoIdsByDay
         self.createdAt = createdAt
     }
 
