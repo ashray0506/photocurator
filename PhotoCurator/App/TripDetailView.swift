@@ -7,6 +7,9 @@ import Photos
 /// yet — see PhotoBookExporter for what's deferred and why).
 struct TripDetailView: View {
     let trip: Trip
+    /// When set (from the sidebar's per-day rows), scrolls straight to that
+    /// day on appear instead of the top of the screen.
+    var scrollToDayKey: String?
     @EnvironmentObject private var scanner: LibraryScanner
     @EnvironmentObject private var toasts: ToastCenter
     @StateObject private var thumbnails = ThumbnailLoader()
@@ -33,6 +36,7 @@ struct TripDetailView: View {
                     Color.clear.frame(height: 0).id("book-draft-top")
                     ForEach(days, id: \.day) { entry in
                         daySection(entry.day, entry.photos)
+                            .id(Trip.dayKey(entry.day))
                     }
                 }
                 .padding(20)
@@ -42,6 +46,13 @@ struct TripDetailView: View {
                 guard shouldScroll else { return }
                 withAnimation { proxy.scrollTo("book-draft-top", anchor: .top) }
                 scrollToBookDraft = false
+            }
+            .task(id: scrollToDayKey) {
+                guard let scrollToDayKey else { return }
+                // A brief delay lets the day grid lay out first — scrolling
+                // to an id before its view exists is a silent no-op.
+                try? await Task.sleep(for: .milliseconds(50))
+                withAnimation { proxy.scrollTo(scrollToDayKey, anchor: .top) }
             }
         }
         .navigationTitle(trip.name)

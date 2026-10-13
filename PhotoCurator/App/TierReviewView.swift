@@ -7,8 +7,14 @@ import Photos
 /// action: "Keep all" for Tier 3 (no delete action exists for that tier —
 /// there is no button in this view that can touch it), or "Delete Tier N"
 /// for Tier 1/2, gated by a single confirmation sheet.
+///
+/// `scope` narrows the screen to one trip's own photos — the sidebar's
+/// per-trip Tier 1/2/3 rows use this so "Delete Tier 1" only touches this
+/// trip's junk, not the whole library. `nil` (the Curate tab's usage) is
+/// the original whole-library behaviour.
 struct TierReviewView: View {
     let tier: Tier
+    var scope: Trip?
     @EnvironmentObject private var scanner: LibraryScanner
     @EnvironmentObject private var toasts: ToastCenter
     @StateObject private var thumbnails = ThumbnailLoader()
@@ -64,7 +70,11 @@ struct TierReviewView: View {
         })
     }
 
-    private var photos: [PhotoRecord] { scanner.photos(in: tier) }
+    private var photos: [PhotoRecord] {
+        guard let scope else { return scanner.photos(in: tier) }
+        let tripIds = Set(scope.photoIds)
+        return scanner.photos(in: tier).filter { tripIds.contains($0.id) }
+    }
 
     // MARK: Header
 
@@ -193,7 +203,7 @@ struct TierReviewView: View {
         switch tier {
         case .tier3Protected:
             Button("Keep All (\(photos.count.formatted()))") {
-                scanner.confirmKeepAll(in: tier)
+                keepAll()
                 didConfirmKeep = true
             }
         case .tier1, .tier2:
@@ -221,12 +231,22 @@ struct TierReviewView: View {
         }
     }
 
+    private func keepAll() {
+        if scope != nil {
+            // Trip-scoped: lock only this trip's Tier 3 photos.
+            scanner.confirmKeep(ids: photos.map(\.id))
+        } else {
+            scanner.confirmKeepAll(in: tier)
+        }
+    }
+
     private func performDelete() async {
         isDeleting = true
-        let count = photos.count
+        let targets = photos   // snapshot: deletion mutates scanner.records, which `photos` reads from
+        let count = targets.count
         defer { isDeleting = false; deleteProgress = nil }
         do {
-            try await scanner.deleteAll(in: tier) { done, total in
+            try await scanner.deletePhotos(targets) { done, total in
                 Task { @MainActor in deleteProgress = (done, total) }
             }
             sample.removeAll()

@@ -25,17 +25,24 @@ struct PhotoCuratorApp: App {
     }
 }
 
-/// Top-level tabs, with the Trip Wrap-Up banner surfaced above them —
-/// the proactive "you just got back, want to clean this up?" moment
-/// (PRD-adjacent product requirement, not in the original spec: Apple
+/// Top-level shell: a persistent left sidebar (every trip, with its own
+/// Dashboard/Tier/Day rows) and a detail pane that routes to whichever
+/// section is selected. Replaces an earlier bottom-TabView layout — trips
+/// need to always be visible and drillable without leaving the sidebar,
+/// matching the reference layout the user asked for.
+///
+/// The Trip Wrap-Up banner (the proactive "you just got back, want to
+/// clean this up?" moment — PRD-adjacent, not in the original spec: Apple
 /// Photos' Memories and Google Photos' trip highlights do this on their
-/// own, without the user having to go looking for a review screen).
+/// own) sits above the split view so it is visible regardless of what's
+/// selected.
 private struct RootView: View {
     @EnvironmentObject private var scanner: LibraryScanner
     @EnvironmentObject private var toasts: ToastCenter
     @State private var wrapUpCandidate: TripDetector.Candidate?
     @State private var dismissedCandidateID: String?
     @State private var showingWrapUp = false
+    @State private var selection: SidebarSelection? = .curateDashboard
 
     var body: some View {
         VStack(spacing: 0) {
@@ -45,11 +52,12 @@ private struct RootView: View {
                                  onDismiss: { dismissedCandidateID = candidate.id })
             }
 
-            TabView {
-                ScanView()
-                    .tabItem { Label("Curate", systemImage: "checkmark.circle") }
-                TripsView()
-                    .tabItem { Label("Trips", systemImage: "airplane") }
+            NavigationSplitView {
+                WorkspaceSidebar(selection: $selection)
+            } detail: {
+                NavigationStack {
+                    WorkspaceDetail(selection: selection)
+                }
             }
         }
         .overlay { ToastOverlay(center: toasts) }

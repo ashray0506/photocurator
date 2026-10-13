@@ -22,6 +22,16 @@ Then ⌘R to run, ⌘U to test. On first run macOS asks for Photos access;
 PhotoCurator requests full library access because duplicate detection has to
 compare across the whole library.
 
+## App shell
+
+A persistent left sidebar (`WorkspaceSidebar`) lists "Scan & Curate" (the
+whole-library screens) and every saved trip, each expandable into its own
+Dashboard / Tier 1 / Tier 2 / Tier 3 / day-by-day rows. Selecting a row routes
+the right-hand detail pane (`WorkspaceDetail`) to the matching screen — trips
+stay visible and drillable without leaving the sidebar, rather than the
+bottom-tab layout the app used before. Trip rows support rename and delete
+via right-click. "Find Trips" lives next to the "Your Trips" section header.
+
 ## What's implemented
 
 The scan produces the dry-run report that PRD §4.4 and §12 specify:
@@ -70,18 +80,21 @@ since the volume here is a few hundred photos, not the whole library:
 name the trip (place-based, same geocoding as the Trips tab), clear the
 trip's own junk/duplicates with one button, and see which photos make the
 book draft, all in one sitting. Saving persists it as an ordinary `Trip`,
-visible afterward in the Trips tab like any other.
+visible afterward in the sidebar like any other.
 
 ## Trips (the "build an album" feature)
 
-A second tab, **Trips**, alongside the scan/curate tab. "Find Trips" detects
-candidates from the survivor photos (anything not in Tier 1/2) and **saves
-every one automatically** with a best-guess name (a real place, resolved by
-reverse geocoding, or a date-range fallback when there's no GPS) — trips
-just appear in the list; there is no gate requiring you to name one before
-it exists. Rename anytime (swipe, or right-click → Rename). Open a trip to
-see it grouped by day — each day labelled with its place segments — and
-export a PDF.
+The sidebar's "Your Trips" section. Its header button (magnifying-glass icon)
+detects candidates from the survivor photos (anything not in Tier 1/2) and
+**saves every one automatically** with a best-guess name (a real place,
+resolved by reverse geocoding, or a date-range fallback when there's no GPS)
+— trips just appear in the sidebar; there is no gate requiring you to name
+one before it exists. Rename or delete via right-click on a trip row.
+Selecting a trip's Dashboard row opens it grouped by day — each day labelled
+with its place segments — with PDF export. Tier 1/2/3 rows under a trip open
+a **trip-scoped** `TierReviewView` (so "Delete Tier 1" only touches that
+trip's junk, not the whole library) via the same screen the whole-library
+Curate flow uses, now parameterised by an optional trip `scope`.
 
 **Trip detection uses GPS, per PRD §10's full design** (an earlier version
 of this feature used date gaps only, based on a stale scan report that

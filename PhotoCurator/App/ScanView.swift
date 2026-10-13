@@ -7,33 +7,32 @@ struct ScanView: View {
     @EnvironmentObject private var scanner: LibraryScanner
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                header
+        VStack(spacing: 0) {
+            header
 
-                Divider()
+            Divider()
 
-                if let report = scanner.report {
-                    ReportView(report: report)
+            if let report = scanner.report {
+                ReportView(report: report)
+            } else {
+                placeholder
+            }
+        }
+        .navigationTitle("Scan & Curate")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                if scanner.isRunning {
+                    Button("Cancel", role: .cancel) { scanner.cancel() }
                 } else {
-                    placeholder
-                }
-            }
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    if scanner.isRunning {
-                        Button("Cancel", role: .cancel) { scanner.cancel() }
-                    } else {
-                        Button(scanner.report == nil ? "Scan Library" : "Rescan") {
-                            scanner.start()
-                        }
-                        .keyboardShortcut(.defaultAction)
+                    Button(scanner.report == nil ? "Scan Library" : "Rescan") {
+                        scanner.start()
                     }
+                    .keyboardShortcut(.defaultAction)
                 }
             }
-            .navigationDestination(for: Tier.self) { tier in
-                TierReviewView(tier: tier)
-            }
+        }
+        .navigationDestination(for: Tier.self) { tier in
+            TierReviewView(tier: tier)
         }
     }
 

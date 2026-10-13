@@ -152,6 +152,13 @@ final class LibraryScanner: ObservableObject {
         try? cache?.confirmKeep(ids: ids)
     }
 
+    /// Same as `confirmKeepAll(in:)` but scoped to an explicit id set — used
+    /// by the trip-scoped tier review so "Keep All" only locks this trip's
+    /// Tier 3 photos, not the whole library's.
+    func confirmKeep(ids: [String]) {
+        try? cache?.confirmKeep(ids: ids)
+    }
+
     /// Deletes every photo currently in `tier`. Delegates the actual
     /// PhotoKit call to `PhotoDeletionService`, which independently refuses
     /// to touch anything tiered as protected — this method's own guard is
