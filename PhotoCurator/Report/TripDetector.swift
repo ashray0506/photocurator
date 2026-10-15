@@ -1,17 +1,23 @@
 import Foundation
 import CoreLocation
 
-/// Detects candidate trips from day grouping, place segmentation, date gaps
-/// and home-location exclusion together (PRD §10, full design, plus the
-/// requirement that routine life at home is never offered as a trip).
+/// Detects candidate trips from day grouping, date gaps and home-location
+/// exclusion together (PRD §10, full design, plus the requirement that
+/// routine life at home is never offered as a trip).
 ///
-/// A trip boundary forms when either:
-/// 1. A silent gap of at least `minGapDays` separates two active *away*
-///    days, or
-/// 2. Consecutive active away days jump at least `tripPlaceJumpDistance`
-///    apart, even with no date gap — this catches a same-week trip to
-///    another city (fly out, spend three days, fly back) that a pure
-///    date-gap detector would merge into ordinary life before and after it.
+/// A trip boundary forms only on a silent gap of at least `minGapDays`
+/// between two active *away* days, or on an intervening home day (see
+/// below) — **not** on GPS distance between consecutive away days. An
+/// earlier version also split on a large same-day-to-day location jump
+/// (`tripPlaceJumpDistance`), meant to catch a short side trip to another
+/// city squeezed into ordinary life with no gap on either side. In
+/// practice that rule fired on any multi-city itinerary with daily
+/// photos — a Rome → Venice → Florence tour became three separate "trips"
+/// purely because each city is >50km from the last, which is wrong for
+/// the overwhelmingly more common case (one trip, several cities) and
+/// matches neither Google Photos' nor Apple Photos' own trip grouping.
+/// A real quick side-trip almost always still has at least one silent day
+/// before or after it, which the gap rule alone catches correctly.
 ///
 /// A day is **home** when the majority of its located photos fall within
 /// any `HomeLocation`'s radius. Home days are dropped before any boundary or
@@ -22,7 +28,7 @@ import CoreLocation
 ///
 /// GPS is used where available and never required: a day with no located
 /// photos cannot be classified as home (there is nothing to check against a
-/// radius) and simply falls back to the other two signals.
+/// radius) and simply falls back to the date-gap signal alone.
 struct TripDetector {
 
     struct Candidate: Identifiable {
@@ -70,15 +76,20 @@ struct TripDetector {
             photosByDay[day, default: []].append(record)
         }
 
-        // Drop home days before anything else: they are not trip material
-        // and must not count toward a trip's photo total or act as a
-        // same-location anchor for the place-jump check.
-        let awayDays = photosByDay.keys
-            .filter { !isHomeDay(photosByDay[$0] ?? [], homes: homes) }
-            .sorted()
+        // Home days are not trip material and must not count toward a
+        // trip's photo total — but a home day sitting between two away
+        // days must still end the first trip and start a new one, even
+        // when the calendar gap it creates is shorter than `minGapDays`
+        // (doc comment above: "they also act as a boundary themselves").
+        // So `homeDays` is kept, sorted, alongside `awayDays`, purely to
+        // answer "was there a home day strictly between these two away
+        // days" in the loop below.
+        let homeDays = Set(photosByDay.keys.filter { isHomeDay(photosByDay[$0] ?? [], homes: homes) })
+        let awayDays = photosByDay.keys.filter { !homeDays.contains($0) }.sorted()
         guard !awayDays.isEmpty else { return [] }
 
-        // Per-day centroid, for the place-jump boundary signal.
+        // Per-day centroid, kept for `hasAnyLocation` and place
+        // segmentation below — no longer used for a boundary decision.
         var centroidByDay: [Date: CLLocation] = [:]
         for day in awayDays {
             let locations = (photosByDay[day] ?? []).compactMap(\.location)
@@ -95,14 +106,14 @@ struct TripDetector {
             let dayGap = calendar.dateComponents([.day], from: previous, to: day).day ?? 0
             let silentDays = dayGap - 1   // counts both a plain gap and any home days in between
 
-            let placeJumped: Bool
-            if let centroidA = centroidByDay[previous], let centroidB = centroidByDay[day] {
-                placeJumped = centroidA.distance(from: centroidB) >= settings.tripPlaceJumpDistance
-            } else {
-                placeJumped = false   // no GPS on one side: cannot measure a jump, so don't claim one
-            }
+            // A home day strictly between these two away days ends the
+            // trip on its own — being home at all means the days on
+            // either side are not the same trip — regardless of whether
+            // the calendar gap it creates also happens to clear
+            // `minGapDays`.
+            let hasHomeDayBetween = Self.anyDayBetween(previous, day, in: homeDays)
 
-            if silentDays >= minGapDays || placeJumped {
+            if silentDays >= minGapDays || hasHomeDayBetween {
                 runs.append(current)
                 current = [day]
             } else {
@@ -133,6 +144,15 @@ struct TripDetector {
                              hasAnyLocation: days.contains { centroidByDay[$0] != nil },
                              segmentsByDay: segmentsByDay)
         }
+    }
+
+    /// Whether any day in `candidates` falls strictly between `start` and
+    /// `end` (exclusive of both). Both inputs are already day-start dates
+    /// (from `PhotoRecord.dayStart`), so plain `Date` comparison is exact —
+    /// no calendar arithmetic needed.
+    nonisolated static func anyDayBetween(_ start: Date, _ end: Date, in candidates: Set<Date>) -> Bool {
+        guard start < end else { return false }
+        return candidates.contains { $0 > start && $0 < end }
     }
 
     /// A day is home when most of its *located* photos sit inside some

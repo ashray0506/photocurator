@@ -51,7 +51,28 @@ final class LibraryScanner: ObservableObject {
     /// Every analysed photo, kept so tier review screens (PRD §6) can work
     /// with individual records: previewing, rescuing and deleting. The
     /// report above is just the aggregate view of this same array.
-    @Published private(set) var records: [PhotoRecord] = []
+    @Published private(set) var records: [PhotoRecord] = [] {
+        didSet {
+            recordsById = nil
+            coverPhotoByTripId.removeAll()
+        }
+    }
+
+    /// Lazily (re)built id-lookup for `photos(in:)`. The sidebar calls that
+    /// once per tier per trip (so 3-4 times per trip just to render),
+    /// and with a 48k-photo library rebuilding a fresh dictionary on every
+    /// call made the whole sidebar list visibly stutter/beachball — this
+    /// caches it across calls, invalidated only when `records` itself
+    /// changes (scan, rescue, delete), not on every render.
+    private var recordsById: [String: PhotoRecord]?
+
+    /// Memoised `coverPhoto(for:)` results. The value is itself optional
+    /// (a trip whose photos have all been deleted has no cover), so this
+    /// deliberately stores a double optional: the outer level means "not
+    /// computed yet", the inner "computed, and there is none" — without
+    /// that distinction a coverless trip would re-rank its whole photo
+    /// set on every single grid render.
+    private var coverPhotoByTripId: [String: PhotoRecord?] = [:]
 
     let deletionService = PhotoDeletionService()
 
@@ -96,9 +117,16 @@ final class LibraryScanner: ObservableObject {
         task?.cancel()
     }
 
-    func start() {
+    /// `ignoreCache: true` re-analyses every photo from scratch, as if the
+    /// cache were empty — for when a user suspects a stale or wrong result
+    /// and wants a from-scratch answer rather than trusting the cache's
+    /// modification-date check. Slow at full library size by design (PRD
+    /// §13's "rescan under 2 minutes" budget is explicitly for the normal,
+    /// cache-assisted path); the cache itself is still written to
+    /// afterward, so the next ordinary rescan is fast again.
+    func start(ignoreCache: Bool = false) {
         guard !isRunning else { return }
-        task = Task { await run() }
+        task = Task { await run(ignoreCache: ignoreCache) }
     }
 
     // MARK: Tier review (PRD §6)
@@ -191,6 +219,45 @@ final class LibraryScanner: ObservableObject {
         rebuildReport()
     }
 
+    /// Deletes Tier 3 "extras" within a trip — survivors the book did not
+    /// choose and that are not protected for a real reason. Routes through
+    /// `PhotoDeletionService.deleteTripExtras`, the one deliberate carve-out
+    /// of "Tier 3 is never deleted" (see that method's doc comment for the
+    /// reason-based guard that still backs it). Kept as its own method
+    /// rather than a flag on `deletePhotos` so every other call site keeps
+    /// the stricter, no-exceptions guard by construction.
+    func deleteTripExtras(_ targets: [PhotoRecord],
+                          progress: (@Sendable (Int, Int) -> Void)? = nil) async throws {
+        guard !targets.isEmpty else { return }
+        try await deletionService.deleteTripExtras(targets, cache: cache, progress: progress)
+
+        let deletedIds = Set(targets.map(\.id))
+        records.removeAll { deletedIds.contains($0.id) }
+        rebuildReport()
+    }
+
+    /// Finds every photo matching a Smart Delete rule set, across the
+    /// whole library regardless of tier — unlike the trip-scoped Extras
+    /// bucket, this is not confined to one trip.
+    func smartDeleteMatches(_ query: SmartDeleteQuery) -> [PhotoRecord] {
+        query.matchingPhotos(in: records, personIdByClusterId: personIdByClusterId)
+    }
+
+    /// Deletes a Smart Delete match set. Routes through
+    /// `PhotoDeletionService.deleteSmartSelection` — see that method's doc
+    /// comment for the safety floor (same reason-based Tier 3 carve-out as
+    /// Extras, plus ordinary Tier 1/2 deletion, independently re-checked
+    /// regardless of what the query already filtered).
+    func deleteSmartSelection(_ targets: [PhotoRecord],
+                              progress: (@Sendable (Int, Int) -> Void)? = nil) async throws {
+        guard !targets.isEmpty else { return }
+        try await deletionService.deleteSmartSelection(targets, cache: cache, progress: progress)
+
+        let deletedIds = Set(targets.map(\.id))
+        records.removeAll { deletedIds.contains($0.id) }
+        rebuildReport()
+    }
+
     /// Recomputes the published report from the current `records` array,
     /// without a rescan. Used after a rescue or deletion changes counts.
     ///
@@ -237,7 +304,7 @@ final class LibraryScanner: ObservableObject {
 
             for (index, candidate) in candidates.enumerated() {
                 let placeName: String?
-                if case .resolved(let name) = names[index] { placeName = name } else { placeName = nil }
+                if case .resolved(let name, _, _) = names[index] { placeName = name } else { placeName = nil }
 
                 let startYear = yearFormatter.string(from: candidate.firstDay)
                 let endYear = yearFormatter.string(from: candidate.lastDay)
@@ -279,6 +346,159 @@ final class LibraryScanner: ObservableObject {
     func removeHomeLocation(id: String) {
         homeLocations.removeAll { $0.id == id }
         try? cache?.deleteHomeLocation(id: id)
+    }
+
+    // MARK: People
+
+    @Published private(set) var people: [Person] = []
+    /// This session's `FaceCluster.id` -> stable `Person.id`, so the
+    /// People screen and a photo's `faceClusterIds` can find each other.
+    /// Rebuilt every scan (cluster ids are only valid within one scan),
+    /// never persisted itself — `Person.id` is what's stable, this is
+    /// just the current session's lookup into it.
+    @Published private(set) var personIdByClusterId: [Int: String] = [:]
+
+    func loadPeople() {
+        people = (try? cache?.loadPeople()) ?? []
+    }
+
+    /// Runs after face clustering in every scan: matches this session's
+    /// known clusters against saved `Person` records (new ones created as
+    /// needed) and persists the result. See `PersonMatcher`'s doc comment
+    /// for why this two-pass design exists instead of `FaceClusterer`
+    /// tracking identity itself.
+    private func matchPeople(faceOutput: FaceClusterer.Output, knownIds: Set<Int>, records: [PhotoRecord]) {
+        var bestPrintByCluster: [Int: (area: Double, print: Data)] = [:]
+        var thumbnailByCluster: [Int: (area: Double, photoId: String, box: CGRect?)] = [:]
+
+        for record in records {
+            for face in record.pendingFacePrints {
+                guard let print = face.featurePrint else { continue }
+                // Which cluster this specific face belongs to isn't
+                // tracked per-face, only per-photo (`faceClusterIds`) —
+                // for a photo with exactly one known cluster membership
+                // this face's print is unambiguous; multi-person photos
+                // just contribute to whichever of their clusters has not
+                // yet seen a larger-area face, which is an acceptable
+                // approximation for picking a representative exemplar.
+                for clusterId in record.faceClusterIds where knownIds.contains(clusterId) {
+                    if face.area > (bestPrintByCluster[clusterId]?.area ?? -1) {
+                        bestPrintByCluster[clusterId] = (face.area, print)
+                        thumbnailByCluster[clusterId] = (face.area, record.id, face.boundingBox)
+                    }
+                }
+            }
+        }
+
+        guard !bestPrintByCluster.isEmpty else { return }
+
+        let clusterPrints = bestPrintByCluster.mapValues(\.print)
+        let thumbnailPhotoId = thumbnailByCluster.mapValues(\.photoId)
+        let thumbnailFaceBox = thumbnailByCluster.mapValues(\.box)
+        var statsByCluster: [Int: (photoCount: Int, dayCount: Int)] = [:]
+        for cluster in faceOutput.clusters where knownIds.contains(cluster.id) {
+            statsByCluster[cluster.id] = (cluster.photoCount, cluster.dayCount)
+        }
+
+        let matches = PersonMatcher().match(clusterPrints: clusterPrints,
+                                            clusterStats: statsByCluster,
+                                            thumbnailPhotoId: thumbnailPhotoId,
+                                            thumbnailFaceBox: thumbnailFaceBox,
+                                            existingPeople: people,
+                                            settings: settings)
+
+        var updatedPeople = people
+        var mapping: [Int: String] = [:]
+        for match in matches {
+            mapping[match.clusterId] = match.person.id
+            try? cache?.savePerson(match.person)
+            if let index = updatedPeople.firstIndex(where: { $0.id == match.person.id }) {
+                updatedPeople[index] = match.person
+            } else {
+                updatedPeople.append(match.person)
+            }
+        }
+        people = updatedPeople
+        personIdByClusterId = mapping
+    }
+
+    /// User-assigned name, persisted immediately. `nil`/empty clears back
+    /// to the generic "Person seen N times" placeholder.
+    func renamePerson(id: String, to newName: String) {
+        guard let index = people.firstIndex(where: { $0.id == id }) else { return }
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        people[index].name = trimmed.isEmpty ? nil : trimmed
+        try? cache?.savePerson(people[index])
+    }
+
+    /// Manually folds `losers` into `keep` — the fix for the one thing
+    /// automatic matching can never fully solve on its own: clustering a
+    /// real person's face correctly is a best effort (reported directly:
+    /// "random faces and same faces are shown differently... many times
+    /// its completely wrong"), so there needs to be a way to correct it
+    /// by hand rather than only ever rescan-and-hope.
+    ///
+    /// Combines both people's representative prints (capped the same way
+    /// `PersonMatcher` caps them, so future rescans keep matching well),
+    /// sums their stats, keeps `keep`'s name/thumbnail if set else falls
+    /// back to a loser's, deletes each loser from the cache, and — this
+    /// session only, until the next rescan re-derives it from the merged
+    /// prints — repoints every cluster id that mapped to a loser so
+    /// `photos(for:)` immediately shows the combined set.
+    func mergePeople(keep keepId: String, into losers: [String]) {
+        guard var keeper = people.first(where: { $0.id == keepId }) else { return }
+        var mergedLoserIds: [String] = []
+
+        for loserId in losers where loserId != keepId {
+            guard let loser = people.first(where: { $0.id == loserId }) else { continue }
+
+            keeper.representativeFeaturePrints.append(contentsOf: loser.representativeFeaturePrints)
+            keeper.photoCount += loser.photoCount
+            keeper.dayCount = max(keeper.dayCount, loser.dayCount)
+            if keeper.name == nil { keeper.name = loser.name }
+            if keeper.thumbnailPhotoId == nil {
+                keeper.thumbnailPhotoId = loser.thumbnailPhotoId
+                keeper.thumbnailFaceBox = loser.thumbnailFaceBox
+            }
+            if let loserFirst = loser.firstSeen {
+                keeper.firstSeen = min(keeper.firstSeen ?? loserFirst, loserFirst)
+            }
+            if let loserLast = loser.lastSeen {
+                keeper.lastSeen = max(keeper.lastSeen ?? loserLast, loserLast)
+            }
+
+            for (clusterId, personId) in personIdByClusterId where personId == loserId {
+                personIdByClusterId[clusterId] = keepId
+            }
+            mergedLoserIds.append(loserId)
+        }
+
+        if keeper.representativeFeaturePrints.count > PersonMatcher.maxStoredPrints {
+            keeper.representativeFeaturePrints.removeFirst(
+                keeper.representativeFeaturePrints.count - PersonMatcher.maxStoredPrints)
+        }
+
+        people.removeAll { mergedLoserIds.contains($0.id) }
+        if let keepIndex = people.firstIndex(where: { $0.id == keepId }) {
+            people[keepIndex] = keeper
+        }
+        try? cache?.savePerson(keeper)
+        for loserId in mergedLoserIds {
+            try? cache?.deletePerson(id: loserId)
+        }
+    }
+
+    /// All photos whose largest or any face matches this person, from the
+    /// current scan's records — mirrors `photos(in tier:)`'s pattern.
+    ///
+    /// Collects every cluster id this session mapped to the person, not
+    /// just one: after `mergePeople`, two different clusters can both
+    /// point at the same surviving `Person.id`, and showing only one of
+    /// them would silently drop half the merged person's photos.
+    func photos(for person: Person) -> [PhotoRecord] {
+        let clusterIds = Set(personIdByClusterId.filter { $0.value == person.id }.keys)
+        guard !clusterIds.isEmpty else { return [] }
+        return records.filter { !Set($0.faceClusterIds).isDisjoint(with: clusterIds) }
     }
 
     // MARK: Trips
@@ -378,11 +598,9 @@ final class LibraryScanner: ObservableObject {
         var saved: [Trip] = []
         for candidate in candidates {
             let placeSegmentsByDay = await resolvePlaceNames(for: candidate.segmentsByDay)
-            let placeNames = placeSegmentsByDay.values.flatMap { $0 }.compactMap(\.placeName)
-            var seen = Set<String>()
-            let distinct = placeNames.filter { seen.insert($0).inserted }
+            let stops = Self.namingStops(from: placeSegmentsByDay)
             let name = Trip.suggestedName(startDay: candidate.startDay, endDay: candidate.endDay,
-                                          placeNames: distinct)
+                                          places: stops)
             let trip = Trip(name: name, startDay: candidate.startDay, endDay: candidate.endDay,
                             photoIds: candidate.photoIds, placeSegmentsByDay: placeSegmentsByDay)
             trips.insert(trip, at: 0)
@@ -418,10 +636,20 @@ final class LibraryScanner: ObservableObject {
 
         var result: [String: [TripPlaceSegment]] = [:]
         for (index, entry) in flatSegments.enumerated() {
-            let placeName: String?
-            if case .resolved(let name) = names[index] { placeName = name } else { placeName = nil }
+            var placeName: String?
+            var city: String?
+            var country: String?
+            if case .resolved(let name, let resolvedCity, let resolvedCountry) = names[index] {
+                placeName = name
+                city = resolvedCity
+                country = resolvedCountry
+            }
             let stored = TripPlaceSegment(id: entry.segment.id.uuidString,
                                           placeName: placeName,
+                                          city: city,
+                                          country: country,
+                                          latitude: entry.segment.centroid?.coordinate.latitude,
+                                          longitude: entry.segment.centroid?.coordinate.longitude,
                                           startDate: entry.segment.startDate,
                                           endDate: entry.segment.endDate,
                                           photoIds: entry.segment.photoIds)
@@ -439,6 +667,36 @@ final class LibraryScanner: ObservableObject {
         try? cache?.saveTrip(trips[index])
     }
 
+    /// Re-geocodes a trip's own photos and renames it with the current
+    /// (country-aware) naming logic — for a trip saved before `country`
+    /// existed on `TripPlaceSegment`, whose stored segments have
+    /// `country == nil` and so can never produce a combined-city name
+    /// without this. Re-segments from the trip's own `photoIds` rather
+    /// than re-running `TripDetector` (boundaries don't need
+    /// re-detecting, just the place names), and only touches this one
+    /// trip's name and place segments — nothing else about it changes.
+    func refreshTripName(id: String) async {
+        guard let index = trips.firstIndex(where: { $0.id == id }) else { return }
+        let trip = trips[index]
+        let calendar = Calendar.current
+        let tripPhotos = photos(in: trip)
+        let byDay = Dictionary(grouping: tripPhotos) { $0.dayStart(calendar: calendar) ?? trip.startDay }
+
+        let segmenter = PlaceSegmenter()
+        var segmentsByDay: [Date: [PlaceSegmenter.Segment]] = [:]
+        for (day, dayPhotos) in byDay {
+            segmentsByDay[day] = segmenter.segment(dayPhotos, settings: settings)
+        }
+
+        let placeSegmentsByDay = await resolvePlaceNames(for: segmentsByDay)
+        let stops = Self.namingStops(from: placeSegmentsByDay)
+
+        guard let freshIndex = trips.firstIndex(where: { $0.id == id }) else { return }
+        trips[freshIndex].placeSegmentsByDay = placeSegmentsByDay
+        trips[freshIndex].name = Trip.suggestedName(startDay: trip.startDay, endDay: trip.endDay, places: stops)
+        try? cache?.saveTrip(trips[freshIndex])
+    }
+
     func deleteTrip(id: String) {
         trips.removeAll { $0.id == id }
         try? cache?.deleteTrip(id: id)
@@ -447,10 +705,91 @@ final class LibraryScanner: ObservableObject {
     /// The trip's photos as live records, in capture order, for the day view
     /// and PDF export.
     func photos(in trip: Trip) -> [PhotoRecord] {
-        let byId = Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0) })
+        let byId: [String: PhotoRecord]
+        if let cached = recordsById {
+            byId = cached
+        } else {
+            byId = Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0) })
+            recordsById = byId
+        }
         return trip.photoIds
             .compactMap { byId[$0] }
             .sorted { ($0.creationDate ?? .distantPast) < ($1.creationDate ?? .distantPast) }
+    }
+
+    /// Tier 3 photos in this trip that the book did NOT choose and that
+    /// are not protected for a real reason — the "kept because nothing
+    /// flagged it, not because it's a favorite/person/edit/album member"
+    /// bucket (`.keep`, `.lowConfidence`, `.specialLandscape`). Computes
+    /// the book's full-trip selection (not just days a screen has already
+    /// rendered — `selectedPhotos` is otherwise lazy per day) so this is
+    /// always complete, then persists any day it had to compute so a
+    /// later book-editor view sees the same selection, not a different
+    /// random ranking.
+    ///
+    /// Deliberately NOT a `Tier` case: `Tier` is the persisted, tested
+    /// safety boundary ("Tier 3 never deletable" — `TierAssignerTests`,
+    /// `PhotoDeletionServiceTests`). This is a trip-scoped view computed
+    /// on demand over the same photos, so that invariant for the real
+    /// tiers stays intact; deleting through this bucket still goes
+    /// through the one `PhotoDeletionService` call site and its own
+    /// tier check, which rejects anything actually tier3-protected for a
+    /// real reason even if this computation were ever wrong.
+    nonisolated static let extrasEligibleReasons: Set<TierReason> = [.keep, .lowConfidence, .specialLandscape]
+
+    func unselectedExtras(in trip: Trip) -> [PhotoRecord] {
+        let tripPhotos = photos(in: trip)
+        let calendar = Calendar.current
+        let byDay = Dictionary(grouping: tripPhotos) { $0.dayStart(calendar: calendar) ?? .distantPast }
+
+        var chosenIds = Set<String>()
+        for (day, dayPhotos) in byDay {
+            let chosen = selectedPhotos(for: day, in: trip, dayPhotos: dayPhotos)
+            chosenIds.formUnion(chosen.map(\.id))
+        }
+
+        return Self.filterExtras(tripPhotos, chosenIds: chosenIds)
+    }
+
+    /// The filtering decision alone, factored out for testability without a
+    /// live scanner/trip/Photos access — mirrors `rankAndSelect`/`swapped`
+    /// below, which do the same for the book-selection and swap logic.
+    ///
+    /// `!$0.hasPeople` is a second, independent guard beyond the reason
+    /// check: `TierAssigner` only tags a photo `.knownPerson` when its face
+    /// cluster clears `knownPersonMinPhotos` (recurs often enough in the
+    /// library to be "known") — a person who appears in just a few photos
+    /// (met once, a less-photographed relative) has a detected face but
+    /// never gets that reason, and fell through to plain `.keep`. Before
+    /// this bucket existed that was harmless (`.keep` just meant "stays in
+    /// Tier 3 forever"); now that `.keep` can be offered for deletion here,
+    /// any detected face or body — known or not — must stay out of this
+    /// bucket regardless of reason.
+    /// Builds `Trip.suggestedName`'s input from resolved place segments:
+    /// city-level only ("Rome", never "I Municipio, Rome"), deduplicated,
+    /// in first-seen order — the "minimum should be city" naming floor.
+    /// Falls back to the fuller `placeName` only for a segment whose
+    /// placemark had no locality/admin area at all, so a real stop is
+    /// never silently dropped just because `city` came back nil.
+    nonisolated static func namingStops(from placeSegmentsByDay: [String: [TripPlaceSegment]]) -> [Trip.PlaceStop] {
+        var seen = Set<String>()
+        var stops: [Trip.PlaceStop] = []
+        for dayKey in placeSegmentsByDay.keys.sorted() {
+            for segment in placeSegmentsByDay[dayKey] ?? [] {
+                guard let label = segment.city ?? segment.placeName, seen.insert(label).inserted else { continue }
+                stops.append(Trip.PlaceStop(name: label, country: segment.country))
+            }
+        }
+        return stops
+    }
+
+    nonisolated static func filterExtras(_ tripPhotos: [PhotoRecord], chosenIds: Set<String>) -> [PhotoRecord] {
+        tripPhotos.filter {
+            $0.tier == .tier3Protected
+            && !$0.hasPeople
+            && extrasEligibleReasons.contains($0.reason)
+            && !chosenIds.contains($0.id)
+        }
     }
 
     // MARK: Book photo selection (PRD §10.4)
@@ -474,6 +813,34 @@ final class LibraryScanner: ObservableObject {
 
         persistSelection(chosen.map(\.id), for: day, in: trip)
         return chosen
+    }
+
+    /// The single best photo in a trip, for its Memories card cover —
+    /// highest `BestPhotoScorer.finalScore` across the whole trip rather
+    /// than its first photo chronologically (which is usually an arrival
+    /// shot, not the one worth showing).
+    ///
+    /// Memoised per trip id: the Memories grid renders a card per trip,
+    /// and ranking every photo of every trip on each SwiftUI re-render
+    /// was exactly the shape of the stall that made the old sidebar
+    /// unusable. Cleared whenever `records` change, alongside the other
+    /// derived caches.
+    func coverPhoto(for trip: Trip) -> PhotoRecord? {
+        // `if let cached` would unwrap only the outer optional and treat a
+        // cached-but-nil cover as a miss; this checks for the key itself.
+        if let cached = coverPhotoByTripId[trip.id] { return cached }
+
+        let tripPhotos = photos(in: trip)
+        guard !tripPhotos.isEmpty else {
+            coverPhotoByTripId[trip.id] = PhotoRecord?.none
+            return nil
+        }
+
+        let knownIds = Set(tripPhotos.flatMap(\.faceClusterIds))
+        let scorer = BestPhotoScorer(settings: settings, knownClusterIds: knownIds)
+        let best = tripPhotos.max { scorer.finalScore($0) < scorer.finalScore($1) }
+        coverPhotoByTripId[trip.id] = best
+        return best
     }
 
     /// The ranking/selection decision alone (PRD §10.4: best 3 to 6 per
@@ -553,7 +920,7 @@ final class LibraryScanner: ObservableObject {
 
     // MARK: Pipeline
 
-    private func run() async {
+    private func run(ignoreCache: Bool = false) async {
         let clock = ContinuousClock()
         let started = clock.now
 
@@ -565,7 +932,7 @@ final class LibraryScanner: ObservableObject {
             let assets = library.fetchAllImageAssets()
             let albumMembers = library.userAlbumMembership()
             let confirmedKeep = (try? cache?.confirmedKeepIds()) ?? []
-            let cached = (try? cache?.loadAll()) ?? [:]
+            let cached = ignoreCache ? [:] : ((try? cache?.loadAll()) ?? [:])
 
             var assetList: [PHAsset] = []
             assetList.reserveCapacity(assets.count)
@@ -577,7 +944,9 @@ final class LibraryScanner: ObservableObject {
                 return
             }
 
-            // Analyse only what changed (PRD §13: rescan under 2 minutes).
+            // Analyse only what changed (PRD §13: rescan under 2 minutes) —
+            // unless `ignoreCache`, in which case `cached` is already empty
+            // above and every asset falls through to `needsAnalysis` below.
             var records: [PhotoRecord] = []
             var needsAnalysis: [PHAsset] = []
             records.reserveCapacity(assetList.count)
@@ -615,6 +984,10 @@ final class LibraryScanner: ObservableObject {
                 records[index].faceClusterIds = faceOutput.assignments[id] ?? []
                 records[index].largestFaceClusterId = faceOutput.largestFaceCluster[id]
             }
+
+            try Task.checkCancellation()
+
+            matchPeople(faceOutput: faceOutput, knownIds: knownIds, records: records)
 
             try Task.checkCancellation()
 
@@ -815,7 +1188,7 @@ final class LibraryScanner: ObservableObject {
             }
         }
         record.pendingFacePrints = zip(facePrints, visionResult.faces).map {
-            PendingFace(featurePrint: $0.0, area: $0.1.area)
+            PendingFace(featurePrint: $0.0, area: $0.1.area, boundingBox: $0.1.boundingBox)
         }
 
         // Outfit prints: torso crop below each face (PRD §5.6).
@@ -939,6 +1312,12 @@ final class LibraryScanner: ObservableObject {
 struct PendingFace: Codable, Sendable {
     var featurePrint: Data?
     var area: Double
+    /// Normalised (0...1, Vision's bottom-left-origin coordinate space)
+    /// bounding box of this face — for cropping a face-thumbnail in the
+    /// People screen. Nil for faces analysed before this field existed;
+    /// those simply fall back to the full photo thumbnail rather than a
+    /// crop, same as any other missing-signal case in this app.
+    var boundingBox: CGRect? = nil
 }
 
 /// One-shot gate around a continuation that a callback may invoke repeatedly.

@@ -109,6 +109,14 @@ final class AnalysisCache: @unchecked Sendable {
             payload BLOB NOT NULL
         );
         """)
+        // Named people, stable across rescans (unlike FaceCluster's
+        // per-session integer id) -- see Person.swift's doc comment.
+        try exec("""
+        CREATE TABLE IF NOT EXISTS person (
+            id      TEXT PRIMARY KEY,
+            payload BLOB NOT NULL
+        );
+        """)
 
         let stored = Int(value(forMetaKey: "schema_version") ?? "0") ?? 0
         if stored != Self.schemaVersion {
@@ -270,6 +278,55 @@ final class AnalysisCache: @unchecked Sendable {
     func deleteTrip(id: String) throws {
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, "DELETE FROM trip WHERE id = ?;", -1, &stmt, nil) == SQLITE_OK else {
+            throw CacheError.statementFailed(lastErrorMessage)
+        }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, id, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw CacheError.statementFailed(lastErrorMessage)
+        }
+    }
+
+    // MARK: People
+
+    func loadPeople() throws -> [Person] {
+        var out: [Person] = []
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT payload FROM person ORDER BY rowid ASC;",
+                                 -1, &stmt, nil) == SQLITE_OK else {
+            throw CacheError.statementFailed(lastErrorMessage)
+        }
+        defer { sqlite3_finalize(stmt) }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let bytes = sqlite3_column_blob(stmt, 0) else { continue }
+            let count = Int(sqlite3_column_bytes(stmt, 0))
+            let data = Data(bytes: bytes, count: count)
+            if let person = try? decoder.decode(Person.self, from: data) { out.append(person) }
+        }
+        return out
+    }
+
+    func savePerson(_ person: Person) throws {
+        let data = try encoder.encode(person)
+        var stmt: OpaquePointer?
+        let sql = "INSERT INTO person (id, payload) VALUES (?, ?) " +
+                  "ON CONFLICT(id) DO UPDATE SET payload=excluded.payload;"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw CacheError.statementFailed(lastErrorMessage)
+        }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, person.id, -1, SQLITE_TRANSIENT)
+        try data.withUnsafeBytes { raw in
+            sqlite3_bind_blob(stmt, 2, raw.baseAddress, Int32(raw.count), SQLITE_TRANSIENT)
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                throw CacheError.statementFailed(lastErrorMessage)
+            }
+        }
+    }
+
+    func deletePerson(id: String) throws {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "DELETE FROM person WHERE id = ?;", -1, &stmt, nil) == SQLITE_OK else {
             throw CacheError.statementFailed(lastErrorMessage)
         }
         defer { sqlite3_finalize(stmt) }

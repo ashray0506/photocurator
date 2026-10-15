@@ -8,9 +8,10 @@ import os
 /// photos or spans at least `knownPersonMinDays` distinct days. Known people
 /// protect their photos into Tier 3, so this runs before tier assignment.
 ///
-/// Greedy single-link clustering against cluster exemplars: at 10k photos the
-/// all-pairs alternative is ~50M distance computations, while exemplar matching
-/// stays linear in photos times clusters.
+/// Greedy clustering against each cluster's stored prints (capped at
+/// `maxPrintsPerCluster`, not one frozen exemplar): at 10k photos the
+/// all-pairs alternative is ~50M distance computations, while this stays
+/// linear in photos times clusters times a small constant.
 struct FaceClusterer: Sendable {
 
     /// One face awaiting assignment.
@@ -32,8 +33,19 @@ struct FaceClusterer: Sendable {
 
     private let log = Logger(subsystem: "app.photocurator", category: "faces")
 
+    /// How many prints each in-progress cluster compares a new face
+    /// against, capped the same way `Person.representativeFeaturePrints`
+    /// is (see `PersonMatcher`). Comparing against every member a cluster
+    /// has ever seen — not one frozen first-seen exemplar — is the fix
+    /// for the reported "same faces shown differently": a single anchor
+    /// face (one angle, one lighting) rejected later photos of the exact
+    /// same person that happened to differ from *that one shot* but would
+    /// have matched comfortably against other members already in the
+    /// cluster, so the same person kept spawning new clusters.
+    private static let maxPrintsPerCluster = 8
+
     func cluster(_ candidates: [Candidate], settings: CuratorSettings) -> Output {
-        var exemplars: [(id: Int, print: VNFeaturePrintObservation)] = []
+        var clusterPrints: [Int: [VNFeaturePrintObservation]] = [:]
         var photoIds: [Int: Set<String>] = [:]
         var days: [Int: Set<Date>] = [:]
         var assignments: [String: [Int]] = [:]
@@ -48,13 +60,19 @@ struct FaceClusterer: Sendable {
                 continue
             }
 
+            // Best (minimum) distance to *any* print already stored for
+            // each existing cluster, not just a single anchor — mirrors
+            // `PersonMatcher`'s across-rescans matching, applied within
+            // one scan's clustering too.
             var matchedId: Int?
             var bestDistance = Float.greatestFiniteMagnitude
-            for exemplar in exemplars {
-                guard let distance = FeaturePrintStore.distance(exemplar.print, observation) else { continue }
-                if distance < bestDistance {
-                    bestDistance = distance
-                    matchedId = exemplar.id
+            for (clusterId, prints) in clusterPrints {
+                for print in prints {
+                    guard let distance = FeaturePrintStore.distance(print, observation) else { continue }
+                    if distance < bestDistance {
+                        bestDistance = distance
+                        matchedId = clusterId
+                    }
                 }
             }
 
@@ -64,8 +82,14 @@ struct FaceClusterer: Sendable {
             } else {
                 clusterId = nextId
                 nextId += 1
-                exemplars.append((clusterId, observation))
             }
+
+            var stored = clusterPrints[clusterId] ?? []
+            stored.append(observation)
+            if stored.count > Self.maxPrintsPerCluster {
+                stored.removeFirst(stored.count - Self.maxPrintsPerCluster)
+            }
+            clusterPrints[clusterId] = stored
 
             photoIds[clusterId, default: []].insert(candidate.photoId)
             if let day = candidate.day { days[clusterId, default: []].insert(day) }

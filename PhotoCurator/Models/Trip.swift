@@ -1,4 +1,5 @@
 import Foundation
+import CoreLocation
 
 /// A sticker placed on a book page (decoration only — per product
 /// requirement, this never touches the source photo; it's drawn on top at
@@ -45,10 +46,34 @@ enum PageCaptionStyle: String, Codable, Sendable, CaseIterable {
 /// network call and should not re-run every time a trip is opened.
 struct TripPlaceSegment: Codable, Sendable, Hashable, Identifiable {
     var id: String
+    /// The fuller, neighbourhood-aware label ("I Municipio, Rome") — used
+    /// for a day page's place caption, where that extra detail is useful.
     var placeName: String?   // nil if geocoding failed or found nothing
+    /// City-level only, never a neighbourhood — the naming minimum
+    /// requested directly ("minimum should be city except home"). Trip
+    /// names build from this, not `placeName`, so a trip never degrades
+    /// below city level the way "I Municipio, Rome + 5 more" did.
+    /// Nil alongside `country` for segments geocoded before these fields
+    /// existed, or wherever the placemark had no locality/admin area at
+    /// all — decodes to nil for old persisted trips rather than failing,
+    /// since `Codable`'s synthesized init treats a missing key as using
+    /// this default.
+    var city: String? = nil
+    var country: String? = nil
+    /// The segment's centroid coordinate, persisted so the journey map can
+    /// plot a real route without re-deriving GPS from each photo live.
+    /// Nil for segments saved before the map feature existed, or with no
+    /// located photos at all — the map simply skips those stops.
+    var latitude: Double? = nil
+    var longitude: Double? = nil
     var startDate: Date
     var endDate: Date
     var photoIds: [String]
+
+    var coordinate: CLLocationCoordinate2D? {
+        guard let latitude, let longitude else { return nil }
+        return CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+    }
 }
 
 /// A user-confirmed trip: a named date range built from a `TripDetector`
@@ -122,6 +147,31 @@ struct Trip: Codable, Identifiable, Sendable, Hashable {
         captionStyleByDay[Self.dayKey(day)] ?? .classic
     }
 
+    /// One stop per day, in date order, for the journey map's animated
+    /// route — the day's first located segment's centroid (a day can have
+    /// several stops; the map draws day-to-day, not stop-to-stop, to keep
+    /// the route legible). Days with no located photos at all are simply
+    /// absent, so the route may have fewer points than `dayCount` on a
+    /// trip with sparse GPS.
+    struct RouteStop: Identifiable {
+        var id: String   // the day key
+        var day: Date
+        var coordinate: CLLocationCoordinate2D
+        var placeName: String?
+        var country: String?
+    }
+
+    var dailyRoute: [RouteStop] {
+        var stops: [RouteStop] = []
+        for (dayKey, segments) in placeSegmentsByDay {
+            guard let first = segments.sorted(by: { $0.startDate < $1.startDate }).first(where: { $0.coordinate != nil }),
+                  let coordinate = first.coordinate else { continue }
+            stops.append(RouteStop(id: dayKey, day: first.startDate, coordinate: coordinate,
+                                   placeName: first.city ?? first.placeName, country: first.country))
+        }
+        return stops.sorted { $0.day < $1.day }
+    }
+
     /// All distinct place names across the trip, in first-seen order —
     /// used to build a place-based suggested name (PRD §10.3: e.g. "Seoul,
     /// South Korea") once segments are resolved.
@@ -138,12 +188,70 @@ struct Trip: Codable, Identifiable, Sendable, Hashable {
         return ordered
     }
 
-    static func suggestedName(startDay: Date, endDay: Date, placeNames: [String] = []) -> String {
-        if let first = placeNames.first {
-            // "Seoul, South Korea" or "Seoul, South Korea + 2 more" for a
-            // multi-city trip, so the name stays short.
-            if placeNames.count > 1 {
-                return "\(first) + \(placeNames.count - 1) more"
+    /// One geocoded stop, as `suggestedName` needs it: a short place label
+    /// plus which country it's in (when known). `places` is in first-seen
+    /// (chronological) order.
+    struct PlaceStop {
+        var name: String
+        var country: String?
+    }
+
+    /// Builds a trip name from its geocoded stops, grouped by country —
+    /// not a flat list of every city visited. The earlier version just
+    /// joined place names ("I Municipio, Rome + 5 more"), which was
+    /// accurate but not evocative, and for a multi-city single-country
+    /// trip (Rome → Venice → Florence) read as a Rome trip with an
+    /// afterthought rather than one Italy trip. Reported directly: "trips
+    /// are still coming as cities instead of countries... combine".
+    ///
+    /// - One country, one city: "Rome, Italy".
+    /// - One country, several cities: "Italy — Rome, Venice & Florence",
+    ///   or "X Days in Italy" once there are too many cities to list
+    ///   (reads better than a long comma chain).
+    /// - Several countries: "Italy & France", or "Italy, France & 1 more"
+    ///   beyond two.
+    /// - No country data at all (geocoding failed/unresolved for every
+    ///   stop, or a GPS-less trip): falls back to the previous date-range
+    ///   name — this is the only case with no place data to work with.
+    static func suggestedName(startDay: Date, endDay: Date, places: [PlaceStop] = []) -> String {
+        let withCountry = places.filter { $0.country != nil }
+
+        if !withCountry.isEmpty {
+            var countryOrder: [String] = []
+            var citiesByCountry: [String: [String]] = [:]
+            for place in withCountry {
+                guard let country = place.country else { continue }
+                if citiesByCountry[country] == nil { countryOrder.append(country) }
+                var cities = citiesByCountry[country] ?? []
+                if !cities.contains(place.name) { cities.append(place.name) }
+                citiesByCountry[country] = cities
+            }
+
+            if countryOrder.count == 1, let country = countryOrder.first {
+                let cities = citiesByCountry[country] ?? []
+                if cities.count <= 1 {
+                    return cities.first.map { "\($0), \(country)" } ?? country
+                }
+                if cities.count <= 3 {
+                    return "\(country) — \(joinedWithAmpersand(cities))"
+                }
+                let dayCount = Calendar.current.dateComponents([.day], from: startDay, to: endDay).day.map { $0 + 1 } ?? 1
+                return "\(dayCount) Days in \(country)"
+            }
+
+            if countryOrder.count <= 2 {
+                return joinedWithAmpersand(countryOrder)
+            }
+            return "\(countryOrder[0]), \(countryOrder[1]) + \(countryOrder.count - 2) more"
+        }
+
+        // No country data for any stop: fall back to a city-name-only
+        // join (still better than nothing when geocoding resolved a name
+        // but not a country), then the date range if there's truly
+        // nothing.
+        if let first = places.first?.name {
+            if places.count > 1 {
+                return "\(first) + \(places.count - 1) more"
             }
             return first
         }
@@ -156,5 +264,11 @@ struct Trip: Codable, Identifiable, Sendable, Hashable {
         }
         let end = formatter.string(from: endDay)
         return "Trip — \(start) to \(end)"
+    }
+
+    private static func joinedWithAmpersand(_ items: [String]) -> String {
+        guard let last = items.last else { return "" }
+        guard items.count > 1 else { return last }
+        return items.dropLast().joined(separator: ", ") + " & " + last
     }
 }

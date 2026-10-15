@@ -4,96 +4,112 @@ import SwiftUI
 struct ReportView: View {
     let report: ScanReport
     @State private var copied = false
+    @Environment(\.colorScheme) private var colorScheme
+    private var colors: ThemeColors { ThemeColors(colorScheme) }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                dryRunNotice
-                totals
+            VStack(alignment: .leading, spacing: 24) {
+                heroCard
                 tierSection
-                peopleSection
-                clusteringSection
-                daysSection
+                DisclosureGroup("Analysis details") {
+                    VStack(alignment: .leading, spacing: 22) {
+                        peopleSection
+                        clusteringSection
+                        daysSection
+                    }
+                    .padding(.top, 12)
+                }
+                .font(.subheadline.weight(.semibold))
             }
-            .padding(20)
+            .padding(24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    // PRD §9.1: the user must see that nothing has changed yet.
-    private var dryRunNotice: some View {
-        Label {
-            Text("Dry run — nothing has been deleted or changed.")
-                .font(.callout.weight(.medium))
-        } icon: {
-            Image(systemName: "checkmark.shield.fill")
-        }
-        .foregroundStyle(.green)
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.green.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
-    }
+    // MARK: Hero card
 
-    private var totals: some View {
-        HStack(spacing: 28) {
-            stat("Photos", report.totalPhotos.formatted())
-            stat("Duration", report.formattedDuration)
-            stat("From cache", report.photosFromCache.formatted())
-            stat("Days", report.days.count.formatted())
-            Spacer()
+    private var heroCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 20) {
+                statChip(icon: "photo.stack", text: "\(report.totalPhotos.formatted()) Photos")
+                statChip(icon: "calendar", text: "\(report.days.count.formatted()) Days")
+                statChip(icon: "checkmark.shield", text: "Dry run")
+            }
+
+            Text("Your library")
+                .font(.system(size: 28, weight: .medium))
+                .foregroundStyle(colors.ink)
+
+            Text("Scanned in \(report.formattedDuration), \(report.photosFromCache.formatted()) from cache. Nothing is deleted until you confirm a tier.")
+                .font(.callout)
+                .foregroundStyle(colors.inkMuted)
+                .lineLimit(3)
+
             Button {
                 copyReport()
             } label: {
-                Label(copied ? "Copied" : "Copy report", systemImage: copied ? "checkmark" : "doc.on.doc")
+                Text(copied ? "Copied" : "Copy report")
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(colors.ink)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 9)
+                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(colors.hairline, lineWidth: 1))
             }
+            .buttonStyle(.plain)
+            .padding(.top, 4)
         }
+        .padding(28)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .themedCard(colors, cornerRadius: 14)
     }
 
-    private func stat(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(value).font(.title3.weight(.semibold).monospacedDigit())
-            Text(label).font(.caption).foregroundStyle(.secondary)
-        }
+    private func statChip(icon: String, text: String) -> some View {
+        Label(text, systemImage: icon)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(colors.inkMuted)
     }
+
+    // MARK: Tiers
 
     private var tierSection: some View {
-        section("Tiers") {
+        HStack(spacing: 14) {
             ForEach(report.tiers) { summary in
                 NavigationLink(value: summary.tier) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text(summary.tier.displayName)
-                                .font(.headline)
-                            Spacer()
-                            Text(summary.count.formatted())
-                                .font(.headline.monospacedDigit())
-                            Text(summary.formattedSize)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Image(systemName: "chevron.right")
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
-                        }
-                        ForEach(summary.reasons, id: \.reason) { entry in
-                            HStack {
-                                Text(entry.reason.displayName)
-                                    .font(.callout)
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                Text(entry.count.formatted())
-                                    .font(.callout.monospacedDigit())
-                                    .foregroundStyle(.secondary)
-                            }
-                            .padding(.leading, 14)
-                        }
-                    }
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+                    tierCard(summary)
                 }
                 .buttonStyle(.plain)
             }
         }
+    }
+
+    private func tierCard(_ summary: ScanReport.TierSummary) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(summary.tier.shortName)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(colors.inkMuted)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
+                    .foregroundStyle(colors.inkMuted)
+            }
+            Text(summary.count.formatted())
+                .font(.title2.weight(.medium))
+                .foregroundStyle(colors.ink)
+            Text(summary.formattedSize)
+                .font(.caption)
+                .foregroundStyle(colors.inkMuted)
+            if let topReason = summary.reasons.first {
+                Text("\(topReason.reason.displayName) · \(topReason.count.formatted())")
+                    .font(.caption2)
+                    .foregroundStyle(colors.inkMuted)
+                    .lineLimit(1)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .themedCard(colors, cornerRadius: 10)
     }
 
     private var peopleSection: some View {

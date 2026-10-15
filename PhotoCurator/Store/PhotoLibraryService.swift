@@ -36,9 +36,26 @@ final class PhotoLibraryService: Sendable {
 
     /// Requests full library access. `.readWrite` is requested now (rather than
     /// `.addOnly`) so the user grants once, before M5 needs delete rights.
+    ///
+    /// Checks `currentStatus` first and only calls
+    /// `PHPhotoLibrary.requestAuthorization` when access genuinely hasn't
+    /// been decided yet (`.notDetermined`). That call is documented to be
+    /// a no-op once a decision already exists — no new prompt — but this
+    /// app runs it on every single launch via the Trip Wrap-Up background
+    /// rescan (`PhotoCuratorApp.swift`'s launch `.task`), and was reported
+    /// as showing the access prompt "too often". Skipping the call
+    /// entirely once status is already settled removes any dependency on
+    /// that documented behaviour actually holding on every macOS version/
+    /// build, rather than relying on it silently doing the right thing.
     @discardableResult
     func requestAccess() async throws -> PHAuthorizationStatus {
-        let status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
+        let existing = currentStatus
+        let status: PHAuthorizationStatus
+        if existing == .notDetermined {
+            status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
+        } else {
+            status = existing
+        }
         switch status {
         case .authorized: return status
         case .limited: throw AccessError.limited

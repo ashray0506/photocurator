@@ -10,6 +10,15 @@ struct TripHeroCard: View {
     let days: [(day: Date, photos: [PhotoRecord])]
     let photos: [PhotoRecord]
     var onOpenBook: (() -> Void)?
+    /// Opt-in AI naming (see `AITripNamer`), surfaced right on the page the
+    /// trip's name already lives on — the rename sheet's "Suggest with AI"
+    /// existed already, but only behind a right-click a user had to already
+    /// know about. nil hides the button outright (no saved API key).
+    var onSuggestName: (() async -> Void)?
+    var isSuggestingName = false
+
+    @Environment(\.colorScheme) private var colorScheme
+    private var colors: ThemeColors { ThemeColors(colorScheme) }
 
     private var tier1Count: Int { photos.filter { $0.tier == .tier1 }.count }
     private var tier2Count: Int { photos.filter { $0.tier == .tier2 }.count }
@@ -26,7 +35,7 @@ struct TripHeroCard: View {
 
     private var coverCard: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 16) {
+            HStack(spacing: 20) {
                 statChip(icon: "calendar", text: dateRangeText)
                 statChip(icon: "clock", text: "\(days.count.formatted()) Days")
                 if let places = placesText {
@@ -34,13 +43,30 @@ struct TripHeroCard: View {
                 }
             }
 
-            Text(trip.name)
-                .font(.system(size: 32, weight: .bold))
-                .foregroundStyle(.white)
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(trip.name)
+                    .font(.system(size: 28, weight: .medium))
+                    .foregroundStyle(colors.ink)
+                if let onSuggestName {
+                    Button {
+                        Task { await onSuggestName() }
+                    } label: {
+                        if isSuggestingName {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Label("Nostalgic name", systemImage: "sparkles")
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Theme.accent)
+                    .disabled(isSuggestingName)
+                }
+            }
 
             Text(summaryText)
                 .font(.callout)
-                .foregroundStyle(.white.opacity(0.75))
+                .foregroundStyle(colors.inkMuted)
                 .lineLimit(3)
 
             // Scrolls to the day sections already on this same screen —
@@ -49,25 +75,25 @@ struct TripHeroCard: View {
             Button {
                 onOpenBook?()
             } label: {
-                Label("Jump to Book Draft", systemImage: "book.closed.fill")
-                    .font(.callout.weight(.semibold))
-                    .foregroundStyle(.black)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 10)
-                    .background(.white, in: RoundedRectangle(cornerRadius: 9))
+                Text("Browse Days")
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(colors.ink)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 9)
+                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(colors.hairline, lineWidth: 1))
             }
             .buttonStyle(.plain)
             .padding(.top, 4)
         }
         .padding(28)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.black, in: RoundedRectangle(cornerRadius: 16))
+        .themedCard(colors, cornerRadius: 14)
     }
 
     private func statChip(icon: String, text: String) -> some View {
         Label(text, systemImage: icon)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.orange)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(colors.inkMuted)
     }
 
     private var dateRangeText: String {
@@ -107,32 +133,30 @@ struct TripHeroCard: View {
     /// already visible via Curate for the library as a whole.
     private var tierRow: some View {
         HStack(spacing: 14) {
-            tierCard(title: "Tier 1: Junk", count: tier1Count,
-                    detail: "Pocket photos, dark blurs, screenshots",
-                    icon: "trash.fill", tint: .red)
-            tierCard(title: "Tier 2: Redundant", count: tier2Count,
-                    detail: "Near-duplicate shots from this trip",
-                    icon: "square.stack.3d.up.fill", tint: .orange)
-            tierCard(title: "Tier 3: Keeps", count: tier3Count,
-                    detail: "Favorites, people, and standout shots",
-                    icon: "star.fill", tint: .green)
+            tierCard(title: "Junk", count: tier1Count,
+                    detail: "Pocket photos, dark blurs, screenshots")
+            tierCard(title: "Redundant", count: tier2Count,
+                    detail: "Near-duplicate shots from this trip")
+            tierCard(title: "Keeps", count: tier3Count,
+                    detail: "Favorites, people, and standout shots")
         }
     }
 
-    private func tierCard(title: String, count: Int, detail: String, icon: String, tint: Color) -> some View {
+    private func tierCard(title: String, count: Int, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label(title.components(separatedBy: ": ").last ?? title, systemImage: icon)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(tint)
+            Text(title)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(colors.inkMuted)
             Text(count.formatted())
-                .font(.title2.weight(.bold))
+                .font(.title2.weight(.medium))
+                .foregroundStyle(colors.ink)
             Text(detail)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(colors.inkMuted)
                 .lineLimit(2)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 12))
+        .themedCard(colors, cornerRadius: 10)
     }
 }

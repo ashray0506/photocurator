@@ -66,6 +66,22 @@ enum Tier: Int, Codable, Comparable, Hashable, Sendable {
         case .tier3Protected: return "Tier 3 · Protected"
         }
     }
+
+    var shortName: String {
+        switch self {
+        case .tier1: return "Junk"
+        case .tier2: return "Redundant"
+        case .tier3Protected: return "Keeps"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .tier1: return "trash.fill"
+        case .tier2: return "square.stack.3d.up.fill"
+        case .tier3Protected: return "star.fill"
+        }
+    }
 }
 
 enum JunkType: String, Codable, Sendable {

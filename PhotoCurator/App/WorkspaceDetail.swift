@@ -15,6 +15,18 @@ struct WorkspaceDetail: View {
         case .curateTier(let tier):
             TierReviewView(tier: tier)
 
+        case .memories:
+            MemoriesView()
+
+        case .worldMap:
+            WorldMapView()
+
+        case .people:
+            PeopleView()
+
+        case .smartDelete:
+            SmartDeleteView()
+
         case .tripDashboard(let tripId):
             if let trip = scanner.trips.first(where: { $0.id == tripId }) {
                 TripDetailView(trip: trip)
@@ -25,6 +37,13 @@ struct WorkspaceDetail: View {
         case .tripTier(let tripId, let tier):
             if let trip = scanner.trips.first(where: { $0.id == tripId }) {
                 TierReviewView(tier: tier, scope: trip)
+            } else {
+                missingTrip
+            }
+
+        case .tripExtras(let tripId):
+            if let trip = scanner.trips.first(where: { $0.id == tripId }) {
+                TierReviewView(tier: .tier3Protected, scope: trip, isExtrasMode: true)
             } else {
                 missingTrip
             }

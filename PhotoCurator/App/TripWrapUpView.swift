@@ -33,6 +33,27 @@ struct TripWrapUpView: View {
     private var junkPhotos: [PhotoRecord] { tripRecords.filter { $0.tier != .tier3Protected } }
     private var keepPhotos: [PhotoRecord] { tripRecords.filter { $0.tier == .tier3Protected } }
 
+    /// What the book draft will actually contain: the best few photos per
+    /// day (PRD §10.4), not every surviving photo. `keepPhotos` was used
+    /// here at first and reported "563 photos make the cut" for an 11-day
+    /// trip — that's the whole trip, which is the opposite of a curated
+    /// draft and made the preview actively misleading about what saving
+    /// would produce.
+    ///
+    /// Ranks with the same `rankAndSelect` the saved-trip editor uses, so
+    /// the preview and the real book agree. Computed here rather than via
+    /// `scanner.selectedPhotos(for:in:)` because that persists its
+    /// selection onto a saved `Trip`, and this trip isn't saved yet.
+    private var bookPhotos: [PhotoRecord] {
+        let calendar = Calendar.current
+        let byDay = Dictionary(grouping: keepPhotos) { $0.dayStart(calendar: calendar) ?? candidate.startDay }
+        let knownIds = Set(keepPhotos.flatMap(\.faceClusterIds))
+        let scorer = BestPhotoScorer(settings: scanner.settings, knownClusterIds: knownIds)
+        return byDay.keys.sorted().flatMap { day in
+            LibraryScanner.rankAndSelect(byDay[day] ?? [], scorer: scorer, settings: scanner.settings)
+        }
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -73,12 +94,10 @@ struct TripWrapUpView: View {
                 tripName = Trip.suggestedName(startDay: candidate.startDay, endDay: candidate.endDay)
                 resolvedSegments = await scanner.resolvePlaceNames(for: candidate.segmentsByDay)
                 isResolvingPlaces = false
-                let placeNames = resolvedSegments.values.flatMap { $0 }.compactMap(\.placeName)
-                if !placeNames.isEmpty {
-                    var seen = Set<String>()
-                    let distinct = placeNames.filter { seen.insert($0).inserted }
+                let stops = LibraryScanner.namingStops(from: resolvedSegments)
+                if !stops.isEmpty {
                     tripName = Trip.suggestedName(startDay: candidate.startDay, endDay: candidate.endDay,
-                                                  placeNames: distinct)
+                                                  places: stops)
                 }
             }
         }
@@ -149,12 +168,12 @@ struct TripWrapUpView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Your book draft")
                 .font(.headline)
-            Text("\(keepPhotos.count.formatted()) photos make the cut. Save the trip to open the full editor and export a PDF.")
+            Text("\(bookPhotos.count.formatted()) of \(keepPhotos.count.formatted()) photos make the cut — the best few from each day. Save the trip to open the full editor and export a PDF.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 100, maximum: 130), spacing: 8)], spacing: 8) {
-                ForEach(keepPhotos.prefix(12)) { record in
+                ForEach(bookPhotos.prefix(12)) { record in
                     thumbnailCell(record, size: 100)
                 }
             }

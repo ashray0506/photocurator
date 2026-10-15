@@ -26,7 +26,11 @@
 	<string>PhotoCurator reads your photo library on this Mac to find duplicates, junk and near-identical shots, and to draft a travel book. Analysis runs entirely on-device.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>PhotoCurator needs permission to modify your library so it can move photos you choose to delete into Recently Deleted.</string>
+	<key>NSLocationUsageDescription</key>
+	<string>PhotoCurator reverse-geocodes GPS coordinates already stored in your photos to name trips and places. It does not track your current location.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>ATSApplicationFontsPath</key>
+	<string>.</string>
 </dict>
 </plist>

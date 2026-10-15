@@ -12,12 +12,28 @@ import Photos
 /// per-trip Tier 1/2/3 rows use this so "Delete Tier 1" only touches this
 /// trip's junk, not the whole library. `nil` (the Curate tab's usage) is
 /// the original whole-library behaviour.
+/// Navigation payload for the "Swipe Review" link — just wraps the same
+/// optional trip scope `TierReviewView` itself takes, as a `Hashable` value
+/// `navigationDestination(for:)` can key off.
+struct SwipeDestination: Hashable {
+    var scope: Trip?
+}
+
 struct TierReviewView: View {
     let tier: Tier
     var scope: Trip?
+    /// When set, this screen reviews a trip's unselected Tier 3 "extras"
+    /// (not in the book, not protected for a real reason) instead of the
+    /// whole tier — see `LibraryScanner.unselectedExtras(in:)`. `tier` is
+    /// still `.tier3Protected` in this mode (these ARE Tier 3 photos), but
+    /// the header, photo list and delete action all come from this flag
+    /// instead, since "Tier 3 is never deletable" no longer holds here.
+    var isExtrasMode = false
     @EnvironmentObject private var scanner: LibraryScanner
     @EnvironmentObject private var toasts: ToastCenter
     @StateObject private var thumbnails = ThumbnailLoader()
+    @Environment(\.colorScheme) private var colorScheme
+    private var colors: ThemeColors { ThemeColors(colorScheme) }
 
     @State private var sample: [PhotoRecord] = []
     @State private var enlarged: PhotoRecord?
@@ -39,15 +55,26 @@ struct TierReviewView: View {
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .background(colors.paper)
         }
-        .navigationTitle(tier.displayName)
+        .navigationTitle(screenTitle)
         .toolbar {
+            if tier == .tier2 && !isExtrasMode {
+                ToolbarItem(placement: .secondaryAction) {
+                    NavigationLink("Swipe Review", value: SwipeDestination(scope: scope))
+                }
+            }
             ToolbarItem(placement: .primaryAction) { primaryButton }
         }
-        .task(id: tier) { loadSample() }
+        .navigationDestination(for: SwipeDestination.self) { destination in
+            SwipeReviewView(scope: destination.scope)
+        }
+        .task(id: isExtrasMode) { loadSample() }
         .sheet(item: $enlarged) { record in
             EnlargedPhotoSheet(record: record,
                               keeper: keeperCounterpart(for: record),
+                              showRescue: isExtrasMode || record.tier != .tier3Protected,
+                              rescueLabel: isExtrasMode ? "Keep This One" : "Rescue to Tier 3",
                               onRescue: { rescue(record) },
                               onDismiss: { enlarged = nil })
         }
@@ -71,9 +98,17 @@ struct TierReviewView: View {
     }
 
     private var photos: [PhotoRecord] {
+        if isExtrasMode {
+            guard let scope else { return [] }
+            return scanner.unselectedExtras(in: scope)
+        }
         guard let scope else { return scanner.photos(in: tier) }
         let tripIds = Set(scope.photoIds)
         return scanner.photos(in: tier).filter { tripIds.contains($0.id) }
+    }
+
+    private var screenTitle: String {
+        isExtrasMode ? "Extra Photos" : tier.displayName
     }
 
     // MARK: Header
@@ -81,7 +116,7 @@ struct TierReviewView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(tier.displayName).font(.title2.weight(.semibold))
+                Text(screenTitle).font(.title2.weight(.semibold))
                 Spacer()
                 Text("\(photos.count.formatted()) photos")
                     .font(.title3.monospacedDigit())
@@ -94,11 +129,15 @@ struct TierReviewView: View {
                     .foregroundStyle(.secondary)
             }
 
-            if tier == .tier3Protected {
+            if isExtrasMode {
+                Text("Not chosen for this trip's book, and not a favorite, album photo, edit, or photo with a known person — the rest of what this trip kept by default.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else if tier == .tier3Protected {
                 Label("This tier is never deleted by any button in this app.",
                      systemImage: "checkmark.shield.fill")
                     .font(.callout)
-                    .foregroundStyle(.green)
+                    .foregroundStyle(Theme.olive)
             }
 
             if let progress = deleteProgress {
@@ -166,13 +205,15 @@ struct TierReviewView: View {
 
             if record.userOverride {
                 Image(systemName: "checkmark.shield.fill")
-                    .foregroundStyle(.white, .green)
+                    .foregroundStyle(.white, Theme.olive)
                     .padding(6)
                     .shadow(radius: 2)
             }
         }
         .contextMenu {
-            if tier != .tier3Protected {
+            if isExtrasMode {
+                Button("Keep This One") { rescue(record) }
+            } else if tier != .tier3Protected {
                 Button("Rescue to Tier 3") { rescue(record) }
             }
         }
@@ -200,19 +241,28 @@ struct TierReviewView: View {
 
     @ViewBuilder
     private var primaryButton: some View {
-        switch tier {
-        case .tier3Protected:
-            Button("Keep All (\(photos.count.formatted()))") {
-                keepAll()
-                didConfirmKeep = true
-            }
-        case .tier1, .tier2:
+        if isExtrasMode {
             Button(role: .destructive) {
                 showDeleteConfirmation = true
             } label: {
-                Text("Delete \(tier == .tier1 ? "Tier 1" : "Tier 2") (\(photos.count.formatted()))")
+                Text("Delete Extras (\(photos.count.formatted()))")
             }
             .disabled(photos.isEmpty || isDeleting)
+        } else {
+            switch tier {
+            case .tier3Protected:
+                Button("Keep All (\(photos.count.formatted()))") {
+                    keepAll()
+                    didConfirmKeep = true
+                }
+            case .tier1, .tier2:
+                Button(role: .destructive) {
+                    showDeleteConfirmation = true
+                } label: {
+                    Text("Delete \(tier == .tier1 ? "Tier 1" : "Tier 2") (\(photos.count.formatted()))")
+                }
+                .disabled(photos.isEmpty || isDeleting)
+            }
         }
     }
 
@@ -226,7 +276,8 @@ struct TierReviewView: View {
         guard let before = scanner.rescue(record.id) else { return }
         sample.removeAll { $0.id == record.id }
         enlarged = nil
-        toasts.show("Rescued to Tier 3.", actionLabel: "Undo") {
+        let message = isExtrasMode ? "Kept — won't be offered for deletion." : "Rescued to Tier 3."
+        toasts.show(message, actionLabel: "Undo") {
             scanner.undoRescue(before)
         }
     }
@@ -246,8 +297,14 @@ struct TierReviewView: View {
         let count = targets.count
         defer { isDeleting = false; deleteProgress = nil }
         do {
-            try await scanner.deletePhotos(targets) { done, total in
-                Task { @MainActor in deleteProgress = (done, total) }
+            if isExtrasMode {
+                try await scanner.deleteTripExtras(targets) { done, total in
+                    Task { @MainActor in deleteProgress = (done, total) }
+                }
+            } else {
+                try await scanner.deletePhotos(targets) { done, total in
+                    Task { @MainActor in deleteProgress = (done, total) }
+                }
             }
             sample.removeAll()
             // Honest framing: this is not an undoable action from the app's
@@ -274,6 +331,8 @@ struct TierReviewView: View {
 private struct EnlargedPhotoSheet: View {
     let record: PhotoRecord
     let keeper: PhotoRecord?
+    var showRescue: Bool
+    var rescueLabel: String = "Rescue to Tier 3"
     let onRescue: () -> Void
     let onDismiss: () -> Void
 
@@ -281,8 +340,8 @@ private struct EnlargedPhotoSheet: View {
         VStack(spacing: 16) {
             if let keeper {
                 HStack(spacing: 16) {
-                    comparisonPane(record, title: "Flagged", tint: .red)
-                    comparisonPane(keeper, title: "Kept instead", tint: .green)
+                    comparisonPane(record, title: "Flagged", isKept: false)
+                    comparisonPane(keeper, title: "Kept instead", isKept: true)
                 }
             } else {
                 singlePane(record)
@@ -291,8 +350,8 @@ private struct EnlargedPhotoSheet: View {
             HStack {
                 Button("Close", action: onDismiss)
                 Spacer()
-                if record.tier != .tier3Protected {
-                    Button("Rescue to Tier 3", action: onRescue)
+                if showRescue {
+                    Button(rescueLabel, action: onRescue)
                         .buttonStyle(.borderedProminent)
                 }
             }
@@ -301,9 +360,13 @@ private struct EnlargedPhotoSheet: View {
         .frame(width: keeper != nil ? 760 : 480)
     }
 
-    private func comparisonPane(_ photo: PhotoRecord, title: String, tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(title, systemImage: tint == .green ? "checkmark.circle.fill" : "xmark.circle.fill")
+    /// Olive = kept (positive/protected), rust = flagged (negative) — the
+    /// fixed keep/remove roles everywhere else in the app, not a color
+    /// picked ad hoc for this one sheet.
+    private func comparisonPane(_ photo: PhotoRecord, title: String, isKept: Bool) -> some View {
+        let tint = isKept ? Theme.olive : Theme.rust
+        return VStack(alignment: .leading, spacing: 8) {
+            Label(title, systemImage: isKept ? "checkmark.circle.fill" : "xmark.circle.fill")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(tint)
             PhotoThumbnailPane(record: photo, targetSize: CGSize(width: 700, height: 700))

@@ -93,18 +93,41 @@ final class TripDetectorTests: XCTestCase {
         XCTAssertFalse(candidates.first?.hasAnyLocation ?? true)
     }
 
-    // MARK: Place-jump boundary (PRD §10, full design)
+    // MARK: Distance between away days never splits a trip on its own
 
-    /// A large GPS jump between consecutive active days splits a trip even
-    /// with zero days of silence between them — the scenario a pure
-    /// date-gap detector would miss entirely.
-    func testLargePlaceJumpSplitsEvenWithNoDateGap() {
+    /// A multi-city trip (fly in, change cities daily, fly out) must stay
+    /// one trip — this was the actual bug report: Rome → Venice →
+    /// Florence, a different city/GPS centroid every single day with zero
+    /// silent days anywhere, was splitting into three separate "trips"
+    /// under the old place-jump rule. Only a silent gap (or a home day)
+    /// may end a trip now; GPS distance between consecutive away days is
+    /// not itself a boundary signal.
+    func testMultiCityTripWithDailyJumpsStaysOneTrip() {
         var detector = TripDetector()
         detector.minDayCount = 1
-        detector.minGapDays = 3   // would normally require a 3-day gap
+        detector.minGapDays = 3
         detector.minPhotosToQualify = 1
-        var settings = CuratorSettings.default
-        settings.tripPlaceJumpDistance = 50_000   // 50km
+
+        // Rome, then Venice (~400km away), then Florence (~230km from
+        // Venice) — a new city and a large jump every single day, no gap.
+        let records = [
+            record("a", daysFromEpoch: 0, latitude: 41.9028, longitude: 12.4964),   // Rome
+            record("b", daysFromEpoch: 1, latitude: 45.4408, longitude: 12.3155),   // Venice
+            record("c", daysFromEpoch: 2, latitude: 43.7696, longitude: 11.2558),   // Florence
+        ]
+
+        let candidates = detector.detect(in: records, settings: .default)
+        XCTAssertEqual(candidates.count, 1, "a daily-changing multi-city itinerary must be one trip, not one per city")
+        XCTAssertEqual(candidates.first?.dayCount, 3)
+    }
+
+    /// A large jump on its own, with no silent day before or after it, no
+    /// longer splits a trip — only `minGapDays` of actual silence does.
+    func testLargeJumpAloneDoesNotSplitWithoutASilentGap() {
+        var detector = TripDetector()
+        detector.minDayCount = 1
+        detector.minGapDays = 3
+        detector.minPhotosToQualify = 1
 
         // Seoul, then consecutive day in Busan (~325km away), no date gap.
         let records = [
@@ -112,45 +135,25 @@ final class TripDetectorTests: XCTestCase {
             record("b", daysFromEpoch: 1, latitude: 35.1796, longitude: 129.0756)
         ]
 
-        let candidates = detector.detect(in: records, settings: settings)
-        XCTAssertEqual(candidates.count, 2, "a large same-week location jump must start a new trip")
-    }
-
-    /// A small GPS move (same city) must not split a trip on its own.
-    func testSmallPlaceMoveDoesNotSplit() {
-        var detector = TripDetector()
-        detector.minGapDays = 3
-        detector.minPhotosToQualify = 1
-        var settings = CuratorSettings.default
-        settings.tripPlaceJumpDistance = 50_000
-
-        // Two points a few km apart within Seoul.
-        let records = [
-            record("a", daysFromEpoch: 0, latitude: 37.5665, longitude: 126.9780),
-            record("b", daysFromEpoch: 1, latitude: 37.5796, longitude: 126.9770)
-        ]
-
-        let candidates = detector.detect(in: records, settings: settings)
+        let candidates = detector.detect(in: records, settings: .default)
         XCTAssertEqual(candidates.count, 1)
     }
 
-    /// Missing GPS on either side of a day boundary must never be read as a
-    /// jump — there is nothing to measure, so detection falls back to the
-    /// date-gap rule alone rather than guessing a split occurred.
-    func testMissingGPSOnEitherSideNeverCountsAsAJump() {
+    /// A real silent gap still splits a trip regardless of distance —
+    /// unchanged from before, this is the one boundary signal that remains.
+    func testSilentGapStillSplitsATrip() {
         var detector = TripDetector()
+        detector.minDayCount = 1
         detector.minGapDays = 3
         detector.minPhotosToQualify = 1
-        var settings = CuratorSettings.default
-        settings.tripPlaceJumpDistance = 50_000
 
         let records = [
             record("a", daysFromEpoch: 0, latitude: 37.5665, longitude: 126.9780),
-            record("b", daysFromEpoch: 1)   // no GPS at all
+            record("b", daysFromEpoch: 10, latitude: 37.5665, longitude: 126.9780)
         ]
 
-        let candidates = detector.detect(in: records, settings: settings)
-        XCTAssertEqual(candidates.count, 1, "no measurable jump should not split the trip")
+        let candidates = detector.detect(in: records, settings: .default)
+        XCTAssertEqual(candidates.count, 2, "a long silent gap must still split a trip")
     }
 
     /// Segments are computed per active day and surfaced on the candidate,
@@ -365,19 +368,74 @@ final class TripModelTests: XCTestCase {
         XCTAssertTrue(name.contains("to"))
     }
 
-    /// PRD §10.3: a single resolved place becomes the trip name outright.
+    /// A single resolved place with a known country becomes "City, Country".
     func testSuggestedNamePrefersSinglePlace() {
         let day = Date(timeIntervalSince1970: 1_700_000_000)
-        let name = Trip.suggestedName(startDay: day, endDay: day, placeNames: ["Seoul, South Korea"])
+        let name = Trip.suggestedName(startDay: day, endDay: day,
+                                      places: [.init(name: "Seoul", country: "South Korea")])
         XCTAssertEqual(name, "Seoul, South Korea")
     }
 
-    /// Multiple places collapse to "first + N more" so the name stays short.
-    func testSuggestedNameCollapsesMultiplePlaces() {
+    /// Reported bug: a multi-city trip within one country was naming
+    /// itself after the first city plus a count ("I Municipio, Rome + 5
+    /// more") instead of reading as one trip to that country. 2-3 cities
+    /// in the same country now join under the country's name.
+    func testSuggestedNameCombinesCitiesInTheSameCountry() {
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        let end = start.addingTimeInterval(86400 * 2)
+        let name = Trip.suggestedName(startDay: start, endDay: end, places: [
+            .init(name: "Rome", country: "Italy"),
+            .init(name: "Venice", country: "Italy"),
+            .init(name: "Florence", country: "Italy"),
+        ])
+        XCTAssertEqual(name, "Italy — Rome, Venice & Florence")
+    }
+
+    /// Beyond 3 cities in one country, naming every city would be a wall
+    /// of text — a day-count framing reads better.
+    func testSuggestedNameUsesDayCountForManyCitiesInOneCountry() {
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        let end = start.addingTimeInterval(86400 * 9)   // 10 days inclusive
+        let name = Trip.suggestedName(startDay: start, endDay: end, places: [
+            .init(name: "Tokyo", country: "Japan"),
+            .init(name: "Kyoto", country: "Japan"),
+            .init(name: "Osaka", country: "Japan"),
+            .init(name: "Nara", country: "Japan"),
+        ])
+        XCTAssertEqual(name, "10 Days in Japan")
+    }
+
+    /// Two different countries join directly; a single country's name
+    /// never needs a "+ N more" treatment reserved for 3+ countries.
+    func testSuggestedNameJoinsTwoCountries() {
+        let day = Date(timeIntervalSince1970: 1_700_000_000)
+        let name = Trip.suggestedName(startDay: day, endDay: day, places: [
+            .init(name: "Paris", country: "France"),
+            .init(name: "Rome", country: "Italy"),
+        ])
+        XCTAssertEqual(name, "France & Italy")
+    }
+
+    /// Three or more countries collapse the same way multi-city names
+    /// used to, since listing every country would be just as unwieldy.
+    func testSuggestedNameCollapsesThreeOrMoreCountries() {
+        let day = Date(timeIntervalSince1970: 1_700_000_000)
+        let name = Trip.suggestedName(startDay: day, endDay: day, places: [
+            .init(name: "Paris", country: "France"),
+            .init(name: "Rome", country: "Italy"),
+            .init(name: "Berlin", country: "Germany"),
+        ])
+        XCTAssertEqual(name, "France, Italy + 1 more")
+    }
+
+    /// A resolved place name with no country attached (older persisted
+    /// trips, or a placemark with no country) falls back to the
+    /// name-only behaviour rather than crashing or silently dropping it.
+    func testSuggestedNameFallsBackWithoutCountryData() {
         let day = Date(timeIntervalSince1970: 1_700_000_000)
         let name = Trip.suggestedName(startDay: day, endDay: day,
-                                      placeNames: ["Seoul, South Korea", "Busan, South Korea"])
-        XCTAssertEqual(name, "Seoul, South Korea + 1 more")
+                                      places: [.init(name: "Seoul, South Korea", country: nil)])
+        XCTAssertEqual(name, "Seoul, South Korea")
     }
 }
 
