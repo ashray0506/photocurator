@@ -6,3 +6,4 @@ xcuserdata/
 *.xcscmblueprint
 *.xccheckout
 build/
+.claude/
